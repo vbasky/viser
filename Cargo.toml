@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/veo-ffmpeg",
+    "crates/veo-quality",
+    "crates/veo-hull",
+    "crates/veo-ladder",
+    "crates/veo-shot",
+    "crates/veo-complexity",
+    "crates/veo-encoding",
+    "crates/veo-checkpoint",
+    "crates/veo-pertitle",
+    "crates/veo-pershot",
+    "crates/veo-persegment",
+    "crates/veo-contextaware",
+    "crates/veo-compare",
+    "crates/veo-chart",
+    "crates/veo-cli",
+]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+clap = { version = "4", features = ["derive"] }

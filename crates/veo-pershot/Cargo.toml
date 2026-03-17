@@ -1,0 +1,17 @@
+[package]
+name = "veo-pershot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+veo-ffmpeg = { path = "../veo-ffmpeg" }
+veo-hull = { path = "../veo-hull" }
+veo-ladder = { path = "../veo-ladder" }
+veo-encoding = { path = "../veo-encoding" }
+veo-pertitle = { path = "../veo-pertitle" }
+veo-shot = { path = "../veo-shot" }
+serde = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tempfile = "3"

@@ -1,0 +1,18 @@
+[package]
+name = "veo-pertitle"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+veo-ffmpeg = { path = "../veo-ffmpeg" }
+veo-hull = { path = "../veo-hull" }
+veo-ladder = { path = "../veo-ladder" }
+veo-quality = { path = "../veo-quality" }
+veo-encoding = { path = "../veo-encoding" }
+veo-checkpoint = { path = "../veo-checkpoint" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tempfile = "3"

@@ -1,0 +1,11 @@
+[package]
+name = "veo-encoding"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+veo-ffmpeg = { path = "../veo-ffmpeg" }
+serde = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
