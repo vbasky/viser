@@ -62,6 +62,7 @@ enum Commands {
 #[derive(Parser)]
 struct EncodeArgs {
     /// Source video file
+    #[arg(short, long)]
     input: String,
     /// Output file path
     #[arg(short, long)]
@@ -90,6 +91,7 @@ enum InspectCommands {
     /// Show video file metadata via ffprobe
     Probe {
         /// Video file to inspect
+        #[arg(short, long)]
         file: String,
     },
 }
