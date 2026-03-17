@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use veo_checkpoint::Checkpoint;
 use veo_encoding::{preset_for_codec, Config as EncodingConfig, ProgressSender};
 use veo_ffmpeg::{
-    encode, probe, Codec, EncodeJob, ProbeCache, ProbeResult, RateControlMode, Resolution,
+    encode, probe, Codec, EncodeJob, ProbeCache, ProbeResult, Resolution,
 };
 use veo_hull::{compute_per_codec, compute_upper, Crossover, Hull, Point};
 use veo_ladder::{self, Ladder, Opts as LadderOpts};

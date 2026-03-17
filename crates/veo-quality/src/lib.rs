@@ -52,7 +52,7 @@ impl Default for MeasureOpts {
 
 /// Computes quality metrics between a reference and distorted video.
 pub async fn measure(reference: &str, distorted: &str, opts: MeasureOpts) -> anyhow::Result<Result> {
-    let model = if opts.model.is_empty() { "vmaf_v0.6.1" } else { &opts.model };
+    let model_name = if opts.model.is_empty() { "vmaf_v0.6.1" } else { &opts.model };
     let metrics = if opts.metrics.is_empty() {
         vec![Metric::Vmaf, Metric::Psnr, Metric::Ssim]
     } else {
@@ -66,7 +66,7 @@ pub async fn measure(reference: &str, distorted: &str, opts: MeasureOpts) -> any
     let log_path = tmp.path().to_string_lossy().to_string();
 
     // Build libvmaf filter string
-    let mut vmaf_opts = format!("log_fmt=json:log_path={log_path}");
+    let mut vmaf_opts = format!("log_fmt=json:log_path={log_path}:model=version={model_name}");
 
     for m in &metrics {
         match m {

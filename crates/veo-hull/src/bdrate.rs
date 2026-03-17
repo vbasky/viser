@@ -14,12 +14,7 @@ pub fn bd_rate(curve_a: &[Point], curve_b: &[Point]) -> Result<f64, BdRateError>
     let (a_rate, a_quality) = extract_rd(curve_a);
     let (b_rate, b_quality) = extract_rd(curve_b);
 
-    let min_q = a_quality.iter().copied().fold(f64::NEG_INFINITY, f64::max)
-        .min(b_quality.iter().copied().fold(f64::NEG_INFINITY, f64::max));
-    let max_q = a_quality.iter().copied().fold(f64::INFINITY, f64::min)
-        .max(b_quality.iter().copied().fold(f64::INFINITY, f64::min));
-
-    // Corrected: overlapping range
+    // Overlapping quality range between the two curves
     let min_q = a_quality.iter().copied().reduce(f64::min).unwrap()
         .max(b_quality.iter().copied().reduce(f64::min).unwrap());
     let max_q = a_quality.iter().copied().reduce(f64::max).unwrap()
