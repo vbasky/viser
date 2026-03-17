@@ -7,5 +7,6 @@ edition = "2024"
 veo-ffmpeg = { path = "../veo-ffmpeg" }
 veo-hull = { path = "../veo-hull" }
 veo-ladder = { path = "../veo-ladder" }
-plotters = "0.3"
+plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "line_series", "bitmap_encoder", "ttf"] }
+png = "0.17"
 anyhow = { workspace = true }
