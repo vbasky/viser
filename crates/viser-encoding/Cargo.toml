@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Shared encoding configuration, preset mapping, temp cleanup for viser"
+keywords = ["encoding", "video", "preset", "codec", "config"]
+categories = ["multimedia::encoding", "multimedia::video"]
 
 [lib]
 name = "viser_encoding"

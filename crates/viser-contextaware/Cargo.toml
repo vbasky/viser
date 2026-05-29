@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Device-specific ladder generation for viser"
+keywords = ["abr", "device", "ladder", "streaming", "video"]
+categories = ["multimedia::encoding", "multimedia::video"]
 
 [lib]
 name = "viser_contextaware"

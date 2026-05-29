@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Bitrate ladder selection with crossover enforcement for viser"
+keywords = ["bitrate", "ladder", "abr", "video", "encoding"]
+categories = ["algorithms", "multimedia::encoding", "multimedia::video"]
 
 [lib]
 name = "viser_ladder"

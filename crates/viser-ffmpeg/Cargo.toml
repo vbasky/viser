@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "FFmpeg/FFprobe wrapper for viser"
+keywords = ["ffmpeg", "ffprobe", "video", "encoding", "transcode"]
+categories = ["multimedia::video", "multimedia::encoding"]
 
 [lib]
 name = "viser_ffmpeg"

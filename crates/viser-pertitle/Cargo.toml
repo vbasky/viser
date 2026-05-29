@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Per-title encoding pipeline with convex hull analysis for viser"
+keywords = ["per-title", "video", "encoding", "vmaf", "ladder"]
+categories = ["multimedia::encoding", "multimedia::video", "algorithms"]
 
 [lib]
 name = "viser_pertitle"

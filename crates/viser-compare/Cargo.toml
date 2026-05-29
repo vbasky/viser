@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Browser-based side-by-side comparison player with VMAF timeline for viser"
+keywords = ["vmaf", "compare", "video", "player", "quality"]
+categories = ["multimedia::video", "web-programming"]
 
 [lib]
 name = "viser_compare"

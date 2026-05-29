@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "CLI for viser - Video Encoding Optimizer"
+keywords = ["video", "encoding", "vmaf", "ffmpeg", "ladder"]
+categories = ["command-line-utilities", "multimedia::video", "multimedia::encoding"]
 
 [[bin]]
 name = "viser"

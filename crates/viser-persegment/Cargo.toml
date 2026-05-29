@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Segment-level CRF adaptation with closed-loop VMAF verification for viser"
+keywords = ["crf", "segment", "vmaf", "video", "encoding"]
+categories = ["multimedia::encoding", "multimedia::video", "algorithms"]
 
 [lib]
 name = "viser_persegment"

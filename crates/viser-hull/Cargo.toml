@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Convex hull (Pareto frontier) and BD-Rate computation for viser"
+keywords = ["convex-hull", "pareto", "bd-rate", "rate-distortion", "video"]
+categories = ["algorithms", "mathematics", "multimedia::encoding"]
 
 [lib]
 name = "viser_hull"

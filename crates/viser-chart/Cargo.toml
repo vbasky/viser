@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Chart generation for viser (R-D curves, convex hull visualizations, ladder charts)"
+keywords = ["chart", "plot", "visualization", "rate-distortion", "video"]
+categories = ["visualization", "multimedia::images"]
 
 [lib]
 name = "viser_chart"

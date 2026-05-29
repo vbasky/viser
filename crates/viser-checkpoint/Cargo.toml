@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Checkpoint/resume support for long-running viser analyses"
+keywords = ["checkpoint", "resume", "video", "encoding", "cache"]
+categories = ["multimedia::encoding", "caching"]
 
 [lib]
 name = "viser_checkpoint"

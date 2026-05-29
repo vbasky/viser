@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Per-shot encoding with Trellis bit allocation for viser"
+keywords = ["per-shot", "trellis", "video", "encoding", "bitrate"]
+categories = ["multimedia::encoding", "multimedia::video", "algorithms"]
 
 [lib]
 name = "viser_pershot"

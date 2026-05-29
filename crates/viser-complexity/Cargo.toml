@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Spatial/temporal/DCT complexity analysis for viser"
+keywords = ["complexity", "video", "dct", "entropy", "analysis"]
+categories = ["multimedia::video", "algorithms", "computer-vision"]
 
 [lib]
 name = "viser_complexity"
