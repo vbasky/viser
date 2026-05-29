@@ -2,6 +2,7 @@
 name = "viser-pershot"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Per-shot encoding with Trellis bit allocation for viser"

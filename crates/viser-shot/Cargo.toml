@@ -2,6 +2,7 @@
 name = "viser-shot"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Shot/scene detection for viser using FFmpeg scdet"

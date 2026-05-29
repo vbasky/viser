@@ -111,6 +111,11 @@ viser per-title analyze -i video.y4m \
   --codecs libx264,libsvtav1 \
   --resolutions 480p,720p,1080p \
   --parallel 4 -o results.json
+viser per-title deliver \
+  --analysis results.json \
+  --output-dir delivery \
+  --parallel 4 \
+  --manifest delivery/manifest.json
 
 # Per-shot analysis
 viser per-shot detect -i video.y4m --threshold 10
@@ -131,8 +136,13 @@ viser compare --reference original.mp4 --encoded encoded.mp4 \
 # Other commands
 viser inspect probe video.mp4
 viser encode input.y4m -o out.mp4
+viser encode input.y4m -o rung_3000k.mp4 --mode vbr --target-bitrate 3000
 viser quality measure --reference a --distorted b
 ```
+
+`per-title deliver` reads a saved analysis JSON, encodes the selected ladder
+rungs as final 2-pass VBR outputs, and writes a manifest describing the emitted
+files with their target and measured bitrates.
 
 ## Supported Codecs
 

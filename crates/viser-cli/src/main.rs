@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
@@ -70,9 +71,15 @@ struct EncodeArgs {
     /// Video codec
     #[arg(long, default_value = "libx264")]
     codec: String,
-    /// CRF value
+    /// Rate control mode (crf, qp, or vbr)
+    #[arg(long, default_value = "crf")]
+    mode: String,
+    /// CRF or QP value for analysis-style modes
     #[arg(long, default_value_t = 23)]
     crf: i32,
+    /// Target average bitrate in kbps for 2-pass VBR mode
+    #[arg(long)]
+    target_bitrate: Option<f64>,
     /// Encoding preset
     #[arg(long, default_value = "medium")]
     preset: String,
@@ -131,6 +138,8 @@ struct QualityMeasureArgs {
 enum PerTitleCommands {
     /// Run per-title analysis
     Analyze(PerTitleAnalyzeArgs),
+    /// Encode final delivery ladder rungs from saved per-title analysis
+    Deliver(PerTitleDeliverArgs),
 }
 
 #[derive(Parser)]
@@ -177,6 +186,34 @@ struct PerTitleAnalyzeArgs {
     /// Rate control mode (crf or qp)
     #[arg(long, default_value = "crf")]
     mode: String,
+}
+
+#[derive(Parser)]
+struct PerTitleDeliverArgs {
+    /// Saved per-title analysis JSON file
+    #[arg(short, long)]
+    analysis: String,
+    /// Directory to write delivery encodes into
+    #[arg(short = 'd', long)]
+    output_dir: String,
+    /// Override source video path from the analysis JSON
+    #[arg(long)]
+    source: Option<String>,
+    /// Override preset used for delivery encodes
+    #[arg(long)]
+    preset: Option<String>,
+    /// Number of delivery encodes to run in parallel (0 = auto)
+    #[arg(long, default_value_t = 0)]
+    parallel: i32,
+    /// Optional manifest output path (defaults to <output-dir>/delivery_manifest.json)
+    #[arg(long)]
+    manifest: Option<String>,
+    /// Output container extension (without dot)
+    #[arg(long, default_value = "mp4")]
+    extension: String,
+    /// Show planned output files without encoding
+    #[arg(long)]
+    dry_run: bool,
 }
 
 // ── Per-Shot ──
@@ -335,6 +372,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Commands::PerTitle { command } => match command {
             PerTitleCommands::Analyze(args) => cmd_pertitle_analyze(args).await,
+            PerTitleCommands::Deliver(args) => cmd_pertitle_deliver(args).await,
         },
         Commands::PerShot { command } => match command {
             PerShotCommands::Detect(args) => cmd_pershot_detect(args).await,
@@ -354,6 +392,22 @@ async fn main() -> anyhow::Result<()> {
 
 async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
     let codec: viser_ffmpeg::Codec = args.codec.parse()?;
+    let rate_control = match args.mode.as_str() {
+        "crf" => viser_ffmpeg::RateControlMode::Crf,
+        "qp" => viser_ffmpeg::RateControlMode::Qp,
+        "vbr" => viser_ffmpeg::RateControlMode::Vbr,
+        other => anyhow::bail!("unsupported encode mode: {other} (expected crf, qp, or vbr)"),
+    };
+
+    let target_bitrate = args.target_bitrate.unwrap_or(0.0);
+    if matches!(rate_control, viser_ffmpeg::RateControlMode::Vbr) && target_bitrate <= 0.0 {
+        anyhow::bail!("--target-bitrate must be set to a positive value when --mode vbr");
+    }
+    if !matches!(rate_control, viser_ffmpeg::RateControlMode::Vbr) && args.target_bitrate.is_some()
+    {
+        anyhow::bail!("--target-bitrate is only valid with --mode vbr");
+    }
+
     let resolution = if args.width > 0 && args.height > 0 {
         Some(viser_ffmpeg::Resolution::new(args.width, args.height))
     } else {
@@ -366,8 +420,8 @@ async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
         resolution,
         codec,
         crf: args.crf,
-        rate_control: viser_ffmpeg::RateControlMode::Crf,
-        target_bitrate: 0.0,
+        rate_control,
+        target_bitrate,
         preset: args.preset,
         extra_args: vec![],
     };
@@ -569,6 +623,142 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
+    validate_file(&args.analysis)?;
+
+    let result = viser_pertitle::Result::load_json(&args.analysis)?;
+    if result.ladder.rungs.is_empty() {
+        anyhow::bail!("analysis contains no ladder rungs to deliver");
+    }
+
+    let source = args.source.unwrap_or_else(|| result.source.clone());
+    validate_file(&source)?;
+
+    let preset = args.preset.unwrap_or_else(|| result.config.encoding.preset.clone());
+    std::fs::create_dir_all(&args.output_dir)?;
+    let manifest_path = args.manifest.clone().unwrap_or_else(|| {
+        Path::new(&args.output_dir).join("delivery_manifest.json").display().to_string()
+    });
+    let parallel = effective_parallel(args.parallel);
+
+    println!("Viser Per-Title Delivery");
+    println!("  Analysis: {}", args.analysis);
+    println!("  Source:   {}", source);
+    println!("  Rungs:    {}", result.ladder.rungs.len());
+    println!("  Preset:   {}", preset);
+    println!("  Parallel: {}", parallel);
+
+    let jobs: Vec<DeliveryPlan> = result
+        .ladder
+        .rungs
+        .iter()
+        .cloned()
+        .map(|rung| {
+            let output =
+                build_delivery_output_path(&args.output_dir, &source, &rung, &args.extension);
+            DeliveryPlan {
+                rung_index: rung.index,
+                resolution: rung.point.resolution.label(),
+                codec: rung.point.codec.as_str().to_string(),
+                crf: rung.point.crf,
+                target_bitrate: rung.point.bitrate,
+                target_vmaf: rung.point.vmaf,
+                output: output.to_string_lossy().into_owned(),
+                rung,
+            }
+        })
+        .collect();
+
+    if args.dry_run {
+        println!("\n  [DRY RUN] Planned delivery encodes:");
+        for job in &jobs {
+            println!(
+                "    #{} {} {} -> {:.0} kbps => {}",
+                job.rung_index + 1,
+                job.resolution,
+                job.codec,
+                job.target_bitrate,
+                job.output
+            );
+        }
+        println!("\n  Manifest would be written to: {}", manifest_path);
+        return Ok(());
+    }
+
+    for job in &jobs {
+        println!(
+            "\n  Queueing rung #{}: {} {} @ {:.0} kbps",
+            job.rung_index + 1,
+            job.resolution,
+            job.codec,
+            job.target_bitrate
+        );
+    }
+
+    let source = Arc::new(source);
+    let preset = Arc::new(preset);
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(parallel));
+    let mut join_set = tokio::task::JoinSet::new();
+
+    for job in jobs.iter().cloned() {
+        let source = source.clone();
+        let preset = preset.clone();
+        let semaphore = semaphore.clone();
+        join_set.spawn(async move {
+            let _permit = semaphore.acquire_owned().await?;
+            let encode_job = viser_ffmpeg::EncodeJob {
+                input: (*source).clone(),
+                output: job.output.clone(),
+                resolution: Some(job.rung.point.resolution),
+                codec: job.rung.point.codec,
+                crf: job.rung.point.crf,
+                rate_control: viser_ffmpeg::RateControlMode::Vbr,
+                target_bitrate: job.rung.point.bitrate,
+                preset: viser_encoding::preset_for_codec(job.rung.point.codec, preset.as_str()),
+                extra_args: vec![],
+            };
+
+            let encode_result = viser_ffmpeg::encode(encode_job, None).await?;
+            Ok::<DeliveryArtifact, anyhow::Error>(DeliveryArtifact {
+                rung_index: job.rung_index,
+                resolution: job.resolution,
+                codec: job.codec,
+                crf: job.crf,
+                target_bitrate: job.target_bitrate,
+                actual_bitrate: encode_result.bitrate,
+                target_vmaf: job.target_vmaf,
+                output: job.output,
+                duration_secs: encode_result.duration.as_secs_f64(),
+            })
+        });
+    }
+
+    let mut delivered = Vec::new();
+    while let Some(joined) = join_set.join_next().await {
+        let artifact = joined??;
+        println!(
+            "    wrote {} ({:.0} kbps actual, {:.1}s)",
+            artifact.output, artifact.actual_bitrate, artifact.duration_secs
+        );
+        delivered.push(artifact);
+    }
+
+    delivered.sort_by_key(|artifact| artifact.rung_index);
+    let manifest = DeliveryManifest {
+        analysis: args.analysis,
+        source: (*source).clone(),
+        output_dir: args.output_dir,
+        preset: (*preset).clone(),
+        extension: args.extension,
+        generated_count: delivered.len(),
+        artifacts: delivered,
+    };
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
+    println!("\nManifest saved to: {}", manifest_path);
+
+    Ok(())
+}
+
 async fn cmd_pershot_detect(args: PerShotDetectArgs) -> anyhow::Result<()> {
     let opts = viser_shot::DetectOpts {
         threshold: args.threshold,
@@ -736,9 +926,106 @@ fn parse_codecs(names: &[String]) -> anyhow::Result<Vec<viser_ffmpeg::Codec>> {
     names.iter().map(|n| n.parse::<viser_ffmpeg::Codec>()).collect()
 }
 
+fn build_delivery_output_path(
+    output_dir: &str,
+    source: &str,
+    rung: &viser_ladder::Rung,
+    extension: &str,
+) -> PathBuf {
+    let source_stem =
+        Path::new(source).file_stem().and_then(|stem| stem.to_str()).unwrap_or("source");
+    let ext = extension.trim_start_matches('.');
+    let file_name = format!(
+        "{source_stem}_rung{:02}_{}_{}_{:.0}k.{}",
+        rung.index + 1,
+        rung.point.resolution.label(),
+        rung.point.codec.as_str(),
+        rung.point.bitrate,
+        ext
+    );
+    Path::new(output_dir).join(file_name)
+}
+
+fn effective_parallel(value: i32) -> usize {
+    if value > 0 {
+        return value as usize;
+    }
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(1)
+}
+
 fn validate_file(path: &str) -> anyhow::Result<()> {
     if !Path::new(path).exists() {
         anyhow::bail!("file not found: {path}");
     }
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct DeliveryPlan {
+    rung_index: i32,
+    resolution: String,
+    codec: String,
+    crf: i32,
+    target_bitrate: f64,
+    target_vmaf: f64,
+    output: String,
+    rung: viser_ladder::Rung,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct DeliveryArtifact {
+    rung_index: i32,
+    resolution: String,
+    codec: String,
+    crf: i32,
+    target_bitrate: f64,
+    actual_bitrate: f64,
+    target_vmaf: f64,
+    output: String,
+    duration_secs: f64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct DeliveryManifest {
+    analysis: String,
+    source: String,
+    output_dir: String,
+    preset: String,
+    extension: String,
+    generated_count: usize,
+    artifacts: Vec<DeliveryArtifact>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_delivery_output_path() {
+        let rung = viser_ladder::Rung {
+            point: viser_hull::Point {
+                resolution: viser_ffmpeg::RES_1080P,
+                codec: viser_ffmpeg::Codec::X264,
+                crf: 23,
+                bitrate: 3000.0,
+                vmaf: 95.0,
+                psnr: 40.0,
+                ssim: 0.99,
+            },
+            index: 1,
+        };
+
+        let path = build_delivery_output_path("dist", "clips/demo.y4m", &rung, "mp4");
+        assert_eq!(path, Path::new("dist").join("demo_rung02_1080p_libx264_3000k.mp4"));
+    }
+
+    #[test]
+    fn test_effective_parallel_uses_explicit_value() {
+        assert_eq!(effective_parallel(3), 3);
+    }
+
+    #[test]
+    fn test_effective_parallel_auto_is_at_least_one() {
+        assert!(effective_parallel(0) >= 1);
+    }
 }

@@ -2,6 +2,7 @@
 name = "viser-chart"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Chart generation for viser (R-D curves, convex hull visualizations, ladder charts)"
@@ -19,6 +20,11 @@ workspace = true
 viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.1.0" }
 viser-hull = { path = "../viser-hull", version = "0.1.0" }
 viser-ladder = { path = "../viser-ladder", version = "0.1.0" }
-plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "line_series", "bitmap_encoder", "ttf"] }
+plotters = { version = "0.3", default-features = false, features = [
+    "bitmap_backend",
+    "line_series",
+    "bitmap_encoder",
+    "ttf",
+] }
 png = "0.17"
 anyhow = { workspace = true }

@@ -2,6 +2,7 @@
 name = "viser-encoding"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Shared encoding configuration, preset mapping, temp cleanup for viser"

@@ -2,6 +2,7 @@
 name = "viser-hull"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Convex hull (Pareto frontier) and BD-Rate computation for viser"

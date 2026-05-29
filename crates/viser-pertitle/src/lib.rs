@@ -343,4 +343,9 @@ impl Result {
         std::fs::write(path, data)?;
         Ok(())
     }
+
+    pub fn load_json(path: &str) -> anyhow::Result<Self> {
+        let data = std::fs::read_to_string(path)?;
+        Ok(serde_json::from_str(&data)?)
+    }
 }
