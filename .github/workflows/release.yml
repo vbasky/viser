@@ -14,8 +14,6 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-      ARCHIVE_NAME: viser-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.ext }}
-
     strategy:
       matrix:
         include:
@@ -52,25 +50,26 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf "${ARCHIVE_NAME}" viser
+          archive="viser-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
+          tar czf "${archive}" viser
 
       - name: Archive (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          7z a "${ARCHIVE_NAME}" viser.exe
+          archive="viser-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          7z a "${archive}" viser.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/${{ env.ARCHIVE_NAME }}
+          path: target/${{ matrix.target }}/release/*
 
   release:
     name: Create GitHub Release
     needs: [build]
-
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -107,44 +106,11 @@ jobs:
           files: /tmp/assets/*
           fail_on_unmatched_files: true
 
-  formula:
-    name: Homebrew formula
-    needs: [release]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fetch source tarball SHA
-        run: |
-          tag="${{ github.ref_name }}"
-          url="https://github.com/vbasky/viser/archive/refs/tags/${tag}.tar.gz"
-          sha=$(curl -sL "${url}" | shasum -a 256 | cut -d' ' -f1)
-
-          cat <<RUBY
-          class Viser < Formula
-            desc "Video Encoding Optimizer — per-content bitrate ladders from R-D analysis"
-            homepage "https://github.com/vbasky/viser"
-            url "https://github.com/vbasky/viser/archive/refs/tags/${tag}.tar.gz"
-            sha256 "${sha}"
-            license "MIT"
-
-            depends_on "rust" => :build
-            depends_on "fontconfig"
-
-            def install
-              system "cargo", "install",
-                *std_cargo_args(path: "crates/viser-cli")
-            end
-
-            test do
-              assert_match version.to_s,
-                shell_output("\#{bin}/viser --version")
-            end
-          end
-          RUBY
-
   publish-crates:
     name: Publish crates.io packages
     needs: [release]
     runs-on: ubuntu-latest
+    env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
       VERSION: ${{ github.ref_name }}
     steps:
@@ -219,3 +185,37 @@ jobs:
           for crate in "${crates[@]}"; do
             publish_with_retries "$crate"
           done
+
+  formula:
+    name: Homebrew formula
+    needs: [publish-crates]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch source tarball SHA
+        run: |
+          tag="${{ github.ref_name }}"
+          url="https://github.com/vbasky/viser/archive/refs/tags/${tag}.tar.gz"
+          sha=$(curl -sL "${url}" | shasum -a 256 | cut -d' ' -f1)
+
+          cat <<RUBY
+          class Viser < Formula
+            desc "Video Encoding Optimizer — per-content bitrate ladders from R-D analysis"
+            homepage "https://github.com/vbasky/viser"
+            url "https://github.com/vbasky/viser/archive/refs/tags/${tag}.tar.gz"
+            sha256 "${sha}"
+            license "MIT"
+
+            depends_on "rust" => :build
+            depends_on "fontconfig"
+
+            def install
+              system "cargo", "install",
+                *std_cargo_args(path: "crates/viser-cli")
+            end
+
+            test do
+              assert_match version.to_s,
+                shell_output("\#{bin}/viser --version")
+            end
+          end
+          RUBY
