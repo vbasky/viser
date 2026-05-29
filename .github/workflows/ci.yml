@@ -16,6 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: install system deps
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+
       - name: install rust
         run: |
           rustup update stable --no-self-update
