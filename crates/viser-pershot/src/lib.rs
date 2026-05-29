@@ -91,6 +91,7 @@ pub async fn analyze(
             ladder_opts: cfg.ladder_opts.clone(),
             checkpoint_path: String::new(),
             vmaf_model: String::new(),
+            allow_hdr: false,
         };
 
         let shot_analysis = viser_pertitle::analyze(&seg_str, shot_cfg, None).await?;

@@ -71,7 +71,7 @@ struct EncodeArgs {
     /// Video codec
     #[arg(long, default_value = "libx264")]
     codec: String,
-    /// Rate control mode (crf, qp, or vbr)
+    /// Rate control mode (crf, capped-crf, qp, or vbr)
     #[arg(long, default_value = "crf")]
     mode: String,
     /// CRF or QP value for analysis-style modes
@@ -80,6 +80,12 @@ struct EncodeArgs {
     /// Target average bitrate in kbps for 2-pass VBR mode
     #[arg(long)]
     target_bitrate: Option<f64>,
+    /// Peak bitrate cap in kbps for capped CRF mode
+    #[arg(long)]
+    max_bitrate: Option<f64>,
+    /// VBV buffer size in kbps for capped CRF mode (defaults to 2x max bitrate)
+    #[arg(long)]
+    bufsize: Option<f64>,
     /// Encoding preset
     #[arg(long, default_value = "medium")]
     preset: String,
@@ -186,6 +192,9 @@ struct PerTitleAnalyzeArgs {
     /// Rate control mode (crf or qp)
     #[arg(long, default_value = "crf")]
     mode: String,
+    /// Allow best-effort analysis on HDR sources
+    #[arg(long)]
+    allow_hdr: bool,
 }
 
 #[derive(Parser)]
@@ -202,9 +211,18 @@ struct PerTitleDeliverArgs {
     /// Override preset used for delivery encodes
     #[arg(long)]
     preset: Option<String>,
+    /// Delivery rate control mode (vbr or capped-crf)
+    #[arg(long, default_value = "vbr")]
+    mode: String,
     /// Number of delivery encodes to run in parallel (0 = auto)
     #[arg(long, default_value_t = 0)]
     parallel: i32,
+    /// VBV buffer size as a multiple of the rung bitrate for capped CRF mode
+    #[arg(long, default_value_t = 2.0)]
+    bufsize_factor: f64,
+    /// Encode ladder rungs in local chunks of this many seconds before concatenation
+    #[arg(long)]
+    chunk_seconds: Option<f64>,
     /// Optional manifest output path (defaults to <output-dir>/delivery_manifest.json)
     #[arg(long)]
     manifest: Option<String>,
@@ -214,6 +232,9 @@ struct PerTitleDeliverArgs {
     /// Show planned output files without encoding
     #[arg(long)]
     dry_run: bool,
+    /// Allow delivery from HDR analyses/sources
+    #[arg(long)]
+    allow_hdr: bool,
 }
 
 // ── Per-Shot ──
@@ -392,20 +413,36 @@ async fn main() -> anyhow::Result<()> {
 
 async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
     let codec: viser_ffmpeg::Codec = args.codec.parse()?;
-    let rate_control = match args.mode.as_str() {
+    let rate_control = match normalize_mode(&args.mode).as_str() {
         "crf" => viser_ffmpeg::RateControlMode::Crf,
+        "capped-crf" => viser_ffmpeg::RateControlMode::CappedCrf,
         "qp" => viser_ffmpeg::RateControlMode::Qp,
         "vbr" => viser_ffmpeg::RateControlMode::Vbr,
-        other => anyhow::bail!("unsupported encode mode: {other} (expected crf, qp, or vbr)"),
+        other => {
+            anyhow::bail!("unsupported encode mode: {other} (expected crf, capped-crf, qp, or vbr)")
+        }
     };
 
     let target_bitrate = args.target_bitrate.unwrap_or(0.0);
+    let max_bitrate = args.max_bitrate.unwrap_or(0.0);
+    let bufsize = args.bufsize.unwrap_or(0.0);
     if matches!(rate_control, viser_ffmpeg::RateControlMode::Vbr) && target_bitrate <= 0.0 {
         anyhow::bail!("--target-bitrate must be set to a positive value when --mode vbr");
     }
     if !matches!(rate_control, viser_ffmpeg::RateControlMode::Vbr) && args.target_bitrate.is_some()
     {
         anyhow::bail!("--target-bitrate is only valid with --mode vbr");
+    }
+    if matches!(rate_control, viser_ffmpeg::RateControlMode::CappedCrf) && max_bitrate <= 0.0 {
+        anyhow::bail!("--max-bitrate must be set to a positive value when --mode capped-crf");
+    }
+    if !matches!(rate_control, viser_ffmpeg::RateControlMode::CappedCrf)
+        && args.max_bitrate.is_some()
+    {
+        anyhow::bail!("--max-bitrate is only valid with --mode capped-crf");
+    }
+    if !matches!(rate_control, viser_ffmpeg::RateControlMode::CappedCrf) && args.bufsize.is_some() {
+        anyhow::bail!("--bufsize is only valid with --mode capped-crf");
     }
 
     let resolution = if args.width > 0 && args.height > 0 {
@@ -422,6 +459,8 @@ async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
         crf: args.crf,
         rate_control,
         target_bitrate,
+        max_bitrate,
+        bufsize,
         preset: args.preset,
         extra_args: vec![],
     };
@@ -464,6 +503,19 @@ async fn cmd_inspect_probe(file: &str) -> anyhow::Result<()> {
         if s.codec_type == "video" {
             println!("  Resolution:  {}x{}", s.width, s.height);
             println!("  Pixel Fmt:   {}", s.pix_fmt);
+            println!(
+                "  Dynamic Range: {}",
+                s.hdr_kind().map(|kind| format!("HDR ({kind})")).unwrap_or_else(|| "SDR".into())
+            );
+            if !s.color_transfer.is_empty() {
+                println!("  Transfer:    {}", s.color_transfer);
+            }
+            if !s.color_primaries.is_empty() {
+                println!("  Primaries:   {}", s.color_primaries);
+            }
+            if !s.color_space.is_empty() {
+                println!("  Color Space: {}", s.color_space);
+            }
             let fps = s.fps();
             if fps > 0.0 {
                 println!("  Frame Rate:  {fps:.2} fps");
@@ -552,6 +604,7 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
         },
         checkpoint_path: String::new(),
         vmaf_model: String::new(),
+        allow_hdr: args.allow_hdr,
     };
 
     let total = resolutions.len() * codecs.len() * args.crf_values.len();
@@ -588,6 +641,10 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
 
     let result = viser_pertitle::analyze(&args.input, cfg, Some(tx)).await?;
     eprintln!();
+
+    for warning in &result.warnings {
+        println!("\n  Warning: {warning}");
+    }
 
     println!("\n  Convex Hull ({} points):", result.hull.points.len());
     for p in &result.hull.points {
@@ -634,19 +691,46 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
     let source = args.source.unwrap_or_else(|| result.source.clone());
     validate_file(&source)?;
 
+    let delivery_mode = parse_delivery_mode(&args.mode)?;
+    if args.bufsize_factor <= 0.0 {
+        anyhow::bail!("--bufsize-factor must be greater than zero");
+    }
+    if let Some(chunk_seconds) = args.chunk_seconds {
+        if chunk_seconds <= 0.0 {
+            anyhow::bail!("--chunk-seconds must be greater than zero");
+        }
+    }
+
+    if let Some(video) = result.source_info.video_stream() {
+        if video.is_hdr() && !args.allow_hdr {
+            anyhow::bail!(
+                "HDR source detected ({}) in analysis/source. Delivery currently requires --allow-hdr for best-effort output.",
+                video.hdr_kind().unwrap_or("HDR")
+            );
+        }
+    }
+
     let preset = args.preset.unwrap_or_else(|| result.config.encoding.preset.clone());
     std::fs::create_dir_all(&args.output_dir)?;
     let manifest_path = args.manifest.clone().unwrap_or_else(|| {
         Path::new(&args.output_dir).join("delivery_manifest.json").display().to_string()
     });
     let parallel = effective_parallel(args.parallel);
+    let source_duration = result.source_info.format.duration;
 
     println!("Viser Per-Title Delivery");
     println!("  Analysis: {}", args.analysis);
     println!("  Source:   {}", source);
     println!("  Rungs:    {}", result.ladder.rungs.len());
     println!("  Preset:   {}", preset);
+    println!("  Mode:     {}", args.mode);
     println!("  Parallel: {}", parallel);
+    if let Some(chunk_seconds) = args.chunk_seconds {
+        println!("  Chunks:   {:.1}s", chunk_seconds);
+    }
+    for warning in &result.warnings {
+        println!("  Warning:  {warning}");
+    }
 
     let jobs: Vec<DeliveryPlan> = result
         .ladder
@@ -673,11 +757,15 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
         println!("\n  [DRY RUN] Planned delivery encodes:");
         for job in &jobs {
             println!(
-                "    #{} {} {} -> {:.0} kbps => {}",
+                "    #{} {} {} -> {:.0} kbps [{}{}] => {}",
                 job.rung_index + 1,
                 job.resolution,
                 job.codec,
                 job.target_bitrate,
+                args.mode,
+                args.chunk_seconds
+                    .map(|seconds| format!(", chunked {seconds:.1}s"))
+                    .unwrap_or_default(),
                 job.output
             );
         }
@@ -687,16 +775,22 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
 
     for job in &jobs {
         println!(
-            "\n  Queueing rung #{}: {} {} @ {:.0} kbps",
+            "\n  Queueing rung #{}: {} {} @ {:.0} kbps [{}{}]",
             job.rung_index + 1,
             job.resolution,
             job.codec,
-            job.target_bitrate
+            job.target_bitrate,
+            args.mode,
+            args.chunk_seconds
+                .map(|seconds| format!(", chunked {seconds:.1}s"))
+                .unwrap_or_default()
         );
     }
 
     let source = Arc::new(source);
     let preset = Arc::new(preset);
+    let chunk_seconds = args.chunk_seconds;
+    let bufsize_factor = args.bufsize_factor;
     let semaphore = Arc::new(tokio::sync::Semaphore::new(parallel));
     let mut join_set = tokio::task::JoinSet::new();
 
@@ -706,19 +800,16 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
         let semaphore = semaphore.clone();
         join_set.spawn(async move {
             let _permit = semaphore.acquire_owned().await?;
-            let encode_job = viser_ffmpeg::EncodeJob {
-                input: (*source).clone(),
-                output: job.output.clone(),
-                resolution: Some(job.rung.point.resolution),
-                codec: job.rung.point.codec,
-                crf: job.rung.point.crf,
-                rate_control: viser_ffmpeg::RateControlMode::Vbr,
-                target_bitrate: job.rung.point.bitrate,
-                preset: viser_encoding::preset_for_codec(job.rung.point.codec, preset.as_str()),
-                extra_args: vec![],
-            };
-
-            let encode_result = viser_ffmpeg::encode(encode_job, None).await?;
+            let encode_result = run_delivery_job(
+                &job,
+                source.as_ref().as_str(),
+                preset.as_str(),
+                delivery_mode,
+                bufsize_factor,
+                chunk_seconds,
+                source_duration,
+            )
+            .await?;
             Ok::<DeliveryArtifact, anyhow::Error>(DeliveryArtifact {
                 rung_index: job.rung_index,
                 resolution: job.resolution,
@@ -728,6 +819,8 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
                 actual_bitrate: encode_result.bitrate,
                 target_vmaf: job.target_vmaf,
                 output: job.output,
+                mode: mode_label(delivery_mode).to_string(),
+                chunk_count: chunk_count(source_duration, chunk_seconds),
                 duration_secs: encode_result.duration.as_secs_f64(),
             })
         });
@@ -749,6 +842,8 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
         source: (*source).clone(),
         output_dir: args.output_dir,
         preset: (*preset).clone(),
+        mode: args.mode,
+        chunk_seconds,
         extension: args.extension,
         generated_count: delivered.len(),
         artifacts: delivered,
@@ -982,6 +1077,8 @@ struct DeliveryArtifact {
     actual_bitrate: f64,
     target_vmaf: f64,
     output: String,
+    mode: String,
+    chunk_count: usize,
     duration_secs: f64,
 }
 
@@ -991,9 +1088,172 @@ struct DeliveryManifest {
     source: String,
     output_dir: String,
     preset: String,
+    mode: String,
+    chunk_seconds: Option<f64>,
     extension: String,
     generated_count: usize,
     artifacts: Vec<DeliveryArtifact>,
+}
+
+async fn run_delivery_job(
+    job: &DeliveryPlan,
+    source: &str,
+    preset: &str,
+    mode: viser_ffmpeg::RateControlMode,
+    bufsize_factor: f64,
+    chunk_seconds: Option<f64>,
+    source_duration: f64,
+) -> anyhow::Result<viser_ffmpeg::EncodeResult> {
+    if let Some(chunk_seconds) = chunk_seconds {
+        return run_chunked_delivery_job(
+            job,
+            source,
+            preset,
+            mode,
+            bufsize_factor,
+            chunk_seconds,
+            source_duration,
+        )
+        .await;
+    }
+
+    let encode_job =
+        build_delivery_encode_job(job, source, &job.output, preset, mode, bufsize_factor, vec![]);
+    viser_ffmpeg::encode(encode_job, None).await
+}
+
+async fn run_chunked_delivery_job(
+    job: &DeliveryPlan,
+    source: &str,
+    preset: &str,
+    mode: viser_ffmpeg::RateControlMode,
+    bufsize_factor: f64,
+    chunk_seconds: f64,
+    source_duration: f64,
+) -> anyhow::Result<viser_ffmpeg::EncodeResult> {
+    let tmp_dir = tempfile::Builder::new().prefix("viser-delivery-").tempdir()?;
+    let chunks = build_chunks(source_duration, chunk_seconds);
+    let mut outputs = Vec::with_capacity(chunks.len());
+    let started = std::time::Instant::now();
+
+    for (index, (start, duration)) in chunks.iter().copied().enumerate() {
+        let chunk_output = tmp_dir.path().join(format!("chunk_{index:03}.mp4"));
+        let extra_args = vec![
+            "-ss".to_string(),
+            format!("{start:.6}"),
+            "-t".to_string(),
+            format!("{duration:.6}"),
+        ];
+        let encode_job = build_delivery_encode_job(
+            job,
+            source,
+            &chunk_output.to_string_lossy(),
+            preset,
+            mode,
+            bufsize_factor,
+            extra_args,
+        );
+        viser_ffmpeg::encode(encode_job, None).await?;
+        outputs.push(chunk_output.to_string_lossy().into_owned());
+    }
+
+    viser_ffmpeg::concat(&outputs, &job.output).await?;
+
+    let meta = std::fs::metadata(&job.output)?;
+    Ok(viser_ffmpeg::EncodeResult {
+        job: build_delivery_encode_job(
+            job,
+            source,
+            &job.output,
+            preset,
+            mode,
+            bufsize_factor,
+            vec![],
+        ),
+        bitrate: probe_average_bitrate(&job.output).await?,
+        file_size: meta.len(),
+        duration: started.elapsed(),
+    })
+}
+
+fn build_delivery_encode_job(
+    job: &DeliveryPlan,
+    source: &str,
+    output: &str,
+    preset: &str,
+    mode: viser_ffmpeg::RateControlMode,
+    bufsize_factor: f64,
+    extra_args: Vec<String>,
+) -> viser_ffmpeg::EncodeJob {
+    let max_bitrate = if matches!(mode, viser_ffmpeg::RateControlMode::CappedCrf) {
+        job.rung.point.bitrate
+    } else {
+        0.0
+    };
+    let bufsize = if max_bitrate > 0.0 { max_bitrate * bufsize_factor } else { 0.0 };
+
+    viser_ffmpeg::EncodeJob {
+        input: source.to_string(),
+        output: output.to_string(),
+        resolution: Some(job.rung.point.resolution),
+        codec: job.rung.point.codec,
+        crf: job.rung.point.crf,
+        rate_control: mode,
+        target_bitrate: if matches!(mode, viser_ffmpeg::RateControlMode::Vbr) {
+            job.rung.point.bitrate
+        } else {
+            0.0
+        },
+        max_bitrate,
+        bufsize,
+        preset: viser_encoding::preset_for_codec(job.rung.point.codec, preset),
+        extra_args,
+    }
+}
+
+async fn probe_average_bitrate(path: &str) -> anyhow::Result<f64> {
+    Ok(viser_ffmpeg::probe(path).await?.format.bit_rate as f64 / 1000.0)
+}
+
+fn parse_delivery_mode(mode: &str) -> anyhow::Result<viser_ffmpeg::RateControlMode> {
+    match normalize_mode(mode).as_str() {
+        "vbr" => Ok(viser_ffmpeg::RateControlMode::Vbr),
+        "capped-crf" => Ok(viser_ffmpeg::RateControlMode::CappedCrf),
+        other => anyhow::bail!("unsupported delivery mode: {other} (expected vbr or capped-crf)"),
+    }
+}
+
+fn normalize_mode(mode: &str) -> String {
+    mode.trim().to_ascii_lowercase().replace('_', "-")
+}
+
+fn mode_label(mode: viser_ffmpeg::RateControlMode) -> &'static str {
+    match mode {
+        viser_ffmpeg::RateControlMode::Crf => "crf",
+        viser_ffmpeg::RateControlMode::CappedCrf => "capped-crf",
+        viser_ffmpeg::RateControlMode::Qp => "qp",
+        viser_ffmpeg::RateControlMode::Vbr => "vbr",
+    }
+}
+
+fn build_chunks(duration: f64, chunk_seconds: f64) -> Vec<(f64, f64)> {
+    if duration <= 0.0 || chunk_seconds <= 0.0 {
+        return vec![];
+    }
+
+    let mut start = 0.0;
+    let mut chunks = Vec::new();
+    while start < duration {
+        let remaining = duration - start;
+        let chunk_duration = remaining.min(chunk_seconds);
+        chunks.push((start, chunk_duration));
+        start += chunk_duration;
+    }
+    chunks
+}
+
+fn chunk_count(duration: f64, chunk_seconds: Option<f64>) -> usize {
+    chunk_seconds.map(|seconds| build_chunks(duration, seconds).len()).unwrap_or(1)
 }
 
 #[cfg(test)]
@@ -1027,5 +1287,18 @@ mod tests {
     #[test]
     fn test_effective_parallel_auto_is_at_least_one() {
         assert!(effective_parallel(0) >= 1);
+    }
+
+    #[test]
+    fn test_build_chunks_splits_remainder() {
+        assert_eq!(build_chunks(25.0, 10.0), vec![(0.0, 10.0), (10.0, 10.0), (20.0, 5.0)]);
+    }
+
+    #[test]
+    fn test_parse_delivery_mode_accepts_capped_crf_alias() {
+        assert_eq!(
+            parse_delivery_mode("capped_crf").unwrap(),
+            viser_ffmpeg::RateControlMode::CappedCrf
+        );
     }
 }

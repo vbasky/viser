@@ -1,8 +1,6 @@
 # viser — Video Encoding Optimizer
 
-<p align="center">
-  <img src="docs/banner.png" alt="viser — Video Encoding Optimizer">
-</p>
+![viser - Video Encoding Optimizer](docs/banner.png)
 
 **Name:** *Viser* blends *vision* + *optimizer* — it sees the optimal encoding for every video. It's also French *viser* ("to aim/see").
 
@@ -27,7 +25,7 @@ decisions to each video's content complexity, producing better quality at lower
 bitrates.
 
 | Content Type | Fixed Ladder @ 3 Mbps 1080p | viser Custom Ladder |
-|---|---|---|
+| --- | --- | --- |
 | Talking head (news anchor) | Excellent — bits wasted | Same quality, half the bitrate |
 | Animation (Pixar-style) | Very good — some waste | Same quality, ~30% less bitrate |
 | Sports (football game) | Acceptable — needs more | Same bitrate, higher quality |
@@ -36,7 +34,7 @@ bitrates.
 ## Optimization Methods
 
 | Method | Granularity | Best For | Description |
-|--------|-------------|----------|-------------|
+| -------- | ------------- | ---------- | ------------- |
 | [Per-Title](docs/per-title-encoding.md) | Whole video | VOD catalogs | Computes a custom bitrate ladder per video using convex hull analysis across resolutions, codecs, and quality levels |
 | [Per-Shot](docs/per-shot-encoding.md) | Shot (2-30s) | Feature films, episodic | Detects scene boundaries and allocates bits across shots using Trellis optimization — complex scenes get more bits, simple get fewer |
 | [Segment-Level CRF](docs/segment-level-adaptation.md) | 1-second segments | Variable complexity content | Adapts CRF per segment with closed-loop VMAF verification to maintain consistent quality |
@@ -114,6 +112,8 @@ viser per-title analyze -i video.y4m \
 viser per-title deliver \
   --analysis results.json \
   --output-dir delivery \
+  --mode capped-crf \
+  --chunk-seconds 30 \
   --parallel 4 \
   --manifest delivery/manifest.json
 
@@ -136,18 +136,26 @@ viser compare --reference original.mp4 --encoded encoded.mp4 \
 # Other commands
 viser inspect probe video.mp4
 viser encode input.y4m -o out.mp4
+viser encode input.y4m -o capped.mp4 --mode capped-crf --crf 20 --max-bitrate 3000
 viser encode input.y4m -o rung_3000k.mp4 --mode vbr --target-bitrate 3000
 viser quality measure --reference a --distorted b
 ```
 
 `per-title deliver` reads a saved analysis JSON, encodes the selected ladder
-rungs as final 2-pass VBR outputs, and writes a manifest describing the emitted
-files with their target and measured bitrates.
+rungs as final delivery outputs, and writes a manifest describing the emitted
+files with their target and measured bitrates. Delivery supports both 2-pass
+VBR and capped-CRF output, plus optional local chunked encoding with automatic
+concatenation.
+
+`per-title analyze` now detects HDR sources from probe metadata. By default it
+refuses HDR inputs because libvmaf-based analysis is still SDR-centric; pass
+`--allow-hdr` only for best-effort workflows. `viser inspect probe` surfaces the
+detected dynamic range and color metadata to make that decision explicit.
 
 ## Supported Codecs
 
 | Codec | Flag | Notes |
-|-------|------|-------|
+| ------- | ------ | ------- |
 | H.264/AVC | `libx264` | Fastest encode, widest device support |
 | H.265/HEVC | `libx265` | ~30-40% better compression than H.264 |
 | AV1 | `libsvtav1` | ~50% better compression, royalty-free, SVT-AV1 4.0 |
@@ -155,7 +163,7 @@ files with their target and measured bitrates.
 ## Design
 
 | Principle | Description |
-|-----------|-------------|
+| ----------- | ------------- |
 | **Content-aware** | Tailors encoding to each video's visual complexity, not one-size-fits-all |
 | **VMAF-driven** | Uses perceptual quality scores that correlate with human eyes, not PSNR |
 | **Pareto-optimal** | Finds the set of encoding points where no improvement is possible without tradeoff |
@@ -167,7 +175,7 @@ files with their target and measured bitrates.
 ## Project Scale
 
 | Metric | Value |
-|--------|-------|
+| -------- | ------- |
 | Workspace crates | 15 |
 | Optimization methods | 4 (per-title, per-shot, per-segment, context-aware) |
 | Codecs | 3 (H.264, H.265, AV1) |
@@ -180,6 +188,7 @@ files with their target and measured bitrates.
 All four optimization methods ported from the prior Go implementation.
 
 - **Per-Title** — Convex hull, BD-Rate, resolution crossover enforcement, Netflix/Apple fixed ladder comparison, CRF and QP trial modes, checkpointing.
+- **Delivery Path** — 2-pass VBR delivery from saved analysis, capped-CRF delivery, manifest export, parallel rung generation, local chunked delivery with concat assembly.
 - **Per-Shot** — Shot detection (scdet), per-shot hulls, Trellis Lagrangian bit allocation.
 - **Segment-Level CRF** — Complexity analysis (entropy + YDIF + DCT energy), binary-search CRF per 1-second segment, closed-loop VMAF verification.
 - **Context-Aware** — Device profiles (mobile/desktop/TV/4K TV) with resolution caps, codec preferences, VMAF model selection.
@@ -187,13 +196,12 @@ All four optimization methods ported from the prior Go implementation.
 ### Backlog
 
 - Chart generation (plotters integration — not yet wired into CLI)
-- Chunked encoding — parallel/distributed encoding across machines
+- Distributed chunked encoding — multi-machine orchestration is still out of scope; current chunking is local-only
 - REST API
 - Comprehensive test suite — core algorithms (convex hull, BD-rate) lack tests despite numerical complexity
 - Scene-transition smoothing — per-shot ladders switch abruptly between shots
 - Audio optimization — audio bitrate split in per-title analysis
 - Screen content awareness — slides, code, UI content needs different encoding strategies
-- Streaming manifest output — produce HLS/DASH playlists from computed ladders
 - ABR switching optimization — ladder rungs tuned for client switching behavior, not just quality-spaced
 - Cost-aware optimization — factor storage/CDN cost into ladder selection
 - HW acceleration in quality measurement — VMAF runs on CPU via libvmaf; GPU-accelerated path
@@ -203,15 +211,14 @@ All four optimization methods ported from the prior Go implementation.
 viser is designed for content-adaptive VOD encoding and explicitly does not address:
 
 - **No ML prediction** — 42+ trial encodes per analysis every time; Bitmovin/Mux predict ladders from source features in minutes, not hours. viser measures, not predicts.
-- **No two-pass VBR** — CRF-only for trial encodes; no mapping to production VBR encodes. Users must map CRF → VBR themselves after analysis.
-- **No HDR support** — PQ/HLG content produces incorrect VMAF scores (libvmaf assumes SDR). HDR-aware metrics needed.
+- **HDR analysis is best-effort only** — HDR is detected and gated behind `--allow-hdr`, but quality scoring still depends on SDR-oriented libvmaf.
 - **No hardware encoders** — NVENC, QuickSync, VideoToolbox not integrated. Software encoders only (libx264, libx265, libsvtav1).
-- **No streaming-aware optimization** — produces JSON ladders, not HLS/DASH manifests. ABR switching behavior not modeled.
+- **No streaming-aware optimization** — delivery can emit manifest metadata for files it wrote, but not HLS/DASH playlists or switching-aware ladder tuning.
 
 ## Documentation
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | [Per-Title Encoding](docs/per-title-encoding.md) | Convex hull, R-D optimization, ladder selection |
 | [Per-Shot Encoding](docs/per-shot-encoding.md) | Shot detection, Trellis, constant-slope bit allocation |
 | [Content-Adaptive Encoding](docs/content-adaptive-encoding.md) | Device profiles, multi-codec hulls |

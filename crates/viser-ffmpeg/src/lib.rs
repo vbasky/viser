@@ -123,6 +123,8 @@ pub enum RateControlMode {
     /// Constant rate factor (default).
     #[default]
     Crf,
+    /// CRF with VBV/decoder-model bitrate cap.
+    CappedCrf,
     /// Fixed quantizer (Netflix-style, no R-D optimization).
     Qp,
     /// 2-pass variable bitrate (for final delivery encodes).

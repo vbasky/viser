@@ -70,6 +70,31 @@ impl StreamInfo {
             format!("{}x{}", self.width, self.height)
         }
     }
+
+    pub fn hdr_kind(&self) -> Option<&'static str> {
+        let transfer = self.color_transfer.to_ascii_lowercase();
+        if transfer == "smpte2084" {
+            return Some("PQ");
+        }
+        if transfer == "arib-std-b67" {
+            return Some("HLG");
+        }
+
+        let primaries_bt2020 = self.color_primaries.eq_ignore_ascii_case("bt2020");
+        let high_bit_depth = self.bits_per_raw_sample >= 10
+            || self.pix_fmt.contains("10")
+            || self.pix_fmt.contains("12")
+            || self.pix_fmt.contains("16");
+        if primaries_bt2020 && high_bit_depth {
+            return Some("BT.2020");
+        }
+
+        None
+    }
+
+    pub fn is_hdr(&self) -> bool {
+        self.hdr_kind().is_some()
+    }
 }
 
 impl FormatInfo {
@@ -235,5 +260,66 @@ fn parse_rational(s: &str) -> f64 {
         if den != 0.0 { num / den } else { 0.0 }
     } else {
         s.parse().unwrap_or(0.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn video_stream() -> StreamInfo {
+        StreamInfo {
+            index: 0,
+            codec_name: "h264".into(),
+            codec_long_name: String::new(),
+            codec_type: "video".into(),
+            profile: String::new(),
+            width: 1920,
+            height: 1080,
+            pix_fmt: "yuv420p".into(),
+            level: 0,
+            field_order: String::new(),
+            color_range: String::new(),
+            color_space: String::new(),
+            color_transfer: String::new(),
+            color_primaries: String::new(),
+            duration: 0.0,
+            bit_rate: 0,
+            nb_frames: 0,
+            r_frame_rate: "24/1".into(),
+            avg_frame_rate: "24/1".into(),
+            sample_rate: 0,
+            channels: 0,
+            channel_layout: String::new(),
+            bits_per_raw_sample: 8,
+        }
+    }
+
+    #[test]
+    fn test_hdr_kind_detects_pq() {
+        let mut stream = video_stream();
+        stream.color_transfer = "smpte2084".into();
+        assert_eq!(stream.hdr_kind(), Some("PQ"));
+        assert!(stream.is_hdr());
+    }
+
+    #[test]
+    fn test_hdr_kind_detects_hlg() {
+        let mut stream = video_stream();
+        stream.color_transfer = "arib-std-b67".into();
+        assert_eq!(stream.hdr_kind(), Some("HLG"));
+    }
+
+    #[test]
+    fn test_hdr_kind_detects_bt2020_high_bit_depth() {
+        let mut stream = video_stream();
+        stream.color_primaries = "bt2020".into();
+        stream.pix_fmt = "yuv420p10le".into();
+        assert_eq!(stream.hdr_kind(), Some("BT.2020"));
+    }
+
+    #[test]
+    fn test_hdr_kind_ignores_sdr() {
+        assert_eq!(video_stream().hdr_kind(), None);
     }
 }

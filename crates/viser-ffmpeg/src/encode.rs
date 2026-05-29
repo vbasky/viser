@@ -15,6 +15,8 @@ pub struct EncodeJob {
     pub crf: i32,
     pub rate_control: RateControlMode,
     pub target_bitrate: f64, // kbps, used for VBR mode
+    pub max_bitrate: f64,    // kbps, used for capped CRF mode
+    pub bufsize: f64,        // kbps, used for capped CRF mode
     pub preset: String,
     pub extra_args: Vec<String>,
 }
@@ -163,6 +165,38 @@ pub async fn extract(input: &str, output: &str, start: f64, duration: f64) -> an
     Ok(())
 }
 
+/// Concatenates multiple encoded chunks into a single output without re-encoding.
+pub async fn concat(inputs: &[String], output: &str) -> anyhow::Result<()> {
+    if inputs.is_empty() {
+        anyhow::bail!("cannot concat an empty input list");
+    }
+
+    let list_path = make_concat_list_path(output);
+    let list_body = inputs
+        .iter()
+        .map(|path| format!("file '{}'", path.replace('\'', "'\\''")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&list_path, format!("{list_body}\n"))?;
+
+    let args = vec![
+        "-y".to_string(),
+        "-f".into(),
+        "concat".into(),
+        "-safe".into(),
+        "0".into(),
+        "-i".into(),
+        list_path.to_string_lossy().into_owned(),
+        "-c".into(),
+        "copy".into(),
+        output.into(),
+    ];
+
+    let result = run_ffmpeg(args, None).await;
+    let _ = std::fs::remove_file(&list_path);
+    result
+}
+
 enum EncodePass<'a> {
     Single,
     First(&'a Path),
@@ -189,6 +223,15 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
                 args.extend(["-qp".into(), job.crf.to_string()]);
             }
         },
+        RateControlMode::CappedCrf => {
+            if job.max_bitrate <= 0.0 {
+                anyhow::bail!("max bitrate must be greater than zero for capped CRF mode");
+            }
+            let bufsize = if job.bufsize > 0.0 { job.bufsize } else { job.max_bitrate * 2.0 };
+            args.extend(["-crf".into(), job.crf.to_string()]);
+            args.extend(["-maxrate".into(), format!("{:.0}k", job.max_bitrate)]);
+            args.extend(["-bufsize".into(), format!("{:.0}k", bufsize)]);
+        }
         RateControlMode::Vbr => {
             if job.target_bitrate <= 0.0 {
                 anyhow::bail!("target bitrate must be greater than zero for VBR mode");
@@ -251,6 +294,15 @@ fn make_passlog_prefix(output: &str) -> PathBuf {
     let stem = output_path.file_stem().and_then(|s| s.to_str()).unwrap_or("viser");
     let unique = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
     parent.join(format!(".{stem}.viser-passlog-{unique}-{}", std::process::id()))
+}
+
+fn make_concat_list_path(output: &str) -> PathBuf {
+    let output_path = Path::new(output);
+    let parent =
+        output_path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let stem = output_path.file_stem().and_then(|s| s.to_str()).unwrap_or("viser");
+    let unique = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    parent.join(format!(".{stem}.viser-concat-{unique}-{}.txt", std::process::id()))
 }
 
 fn null_output_path() -> &'static str {
@@ -334,6 +386,8 @@ mod tests {
             crf: 23,
             rate_control: mode,
             target_bitrate: 2500.0,
+            max_bitrate: 3000.0,
+            bufsize: 6000.0,
             preset: "medium".into(),
             extra_args: vec![],
         }
@@ -364,5 +418,14 @@ mod tests {
         let args = build_encode_args(&job, EncodePass::Second(passlog)).unwrap();
         assert!(args.windows(2).any(|w| w == ["-pass", "2"]));
         assert_eq!(args.last().unwrap(), "output.mp4");
+    }
+
+    #[test]
+    fn test_build_encode_args_capped_crf_sets_vbv() {
+        let args =
+            build_encode_args(&sample_job(RateControlMode::CappedCrf), EncodePass::Single).unwrap();
+        assert!(args.windows(2).any(|w| w == ["-crf", "23"]));
+        assert!(args.windows(2).any(|w| w == ["-maxrate", "3000k"]));
+        assert!(args.windows(2).any(|w| w == ["-bufsize", "6000k"]));
     }
 }

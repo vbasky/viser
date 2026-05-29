@@ -21,6 +21,8 @@ pub struct Config {
     pub checkpoint_path: String,
     #[serde(default)]
     pub vmaf_model: String,
+    #[serde(default)]
+    pub allow_hdr: bool,
 }
 
 impl Default for Config {
@@ -30,6 +32,7 @@ impl Default for Config {
             ladder_opts: LadderOpts::default(),
             checkpoint_path: String::new(),
             vmaf_model: String::new(),
+            allow_hdr: false,
         }
     }
 }
@@ -84,6 +87,12 @@ pub async fn analyze(
         .video_stream()
         .ok_or_else(|| anyhow::anyhow!("no video stream found in {source}"))?;
     video.validate()?;
+    if video.is_hdr() && !cfg.allow_hdr {
+        anyhow::bail!(
+            "HDR source detected ({}) in {source}. Per-title analysis currently targets SDR/VMAF workflows; rerun with allow_hdr enabled only for best-effort behavior.",
+            video.hdr_kind().unwrap_or("HDR")
+        );
+    }
 
     // Filter resolutions to those <= source resolution
     let mut resolutions: Vec<Resolution> =
@@ -145,6 +154,15 @@ pub async fn analyze(
 
     let points = Arc::new(Mutex::new(Vec::new()));
     let warnings = Arc::new(Mutex::new(Vec::new()));
+    if video.is_hdr() {
+        warnings.lock().await.push(format!(
+            "HDR source detected ({}; transfer={}, primaries={}, pix_fmt={}). Metrics and ladder selection are best-effort.",
+            video.hdr_kind().unwrap_or("HDR"),
+            if video.color_transfer.is_empty() { "unknown" } else { &video.color_transfer },
+            if video.color_primaries.is_empty() { "unknown" } else { &video.color_primaries },
+            if video.pix_fmt.is_empty() { "unknown" } else { &video.pix_fmt },
+        ));
+    }
     let done = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let total = trials.len();
 
@@ -199,6 +217,8 @@ pub async fn analyze(
                 crf: t.crf,
                 rate_control: cfg.encoding.rate_control,
                 target_bitrate: 0.0,
+                max_bitrate: 0.0,
+                bufsize: 0.0,
                 preset: preset_for_codec(t.codec, &cfg.encoding.preset),
                 extra_args: vec![],
             };
