@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.0] - 2026-05-29
+
+### Added
+
+- **Two-pass VBR delivery workflow**: per-title analyses can now be turned into final delivery encodes with saved-analysis driven rung generation
+- **Parallel delivery pipeline**: rung encodes can run concurrently with semaphore-controlled fan-out
+- **Delivery manifest export**: delivery runs can emit machine-readable manifest JSON with artifact metadata and measured bitrates
+- **Capped CRF mode**: added capped-CRF rate control for direct encodes and per-title delivery outputs
+- **Local chunked delivery**: per-title delivery can split outputs into local chunks and concatenate them into final artifacts
+- **HDR probe classification**: ffprobe metadata is now classified for HDR formats including PQ, HLG, and BT.2020/high-bit-depth sources
+
+### Changed
+
+- **HDR guardrails**: per-title analysis and delivery now block HDR inputs by default unless best-effort `--allow-hdr` is explicitly set
+- **CLI encode surface**: `viser encode` and `viser per-title deliver` now expose richer rate-control options for VBR and capped-CRF workflows
+- **Probe inspection output**: `viser inspect probe` now shows dynamic-range and color-metadata details directly in the CLI
+- **Documentation**: README updated to describe the new delivery pipeline, capped-CRF support, chunked delivery, and HDR limitations
+
 ## [0.1.0] - 2026-05-29
 
 ### Added
