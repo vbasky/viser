@@ -160,10 +160,26 @@ All four optimization methods ported from the prior Go implementation.
 
 ### Backlog
 - Chart generation (plotters integration — not yet wired into CLI)
-- Chunked encoding
-- ML feature extraction and prediction
+- Chunked encoding — parallel/distributed encoding across machines
 - REST API
-- Comprehensive test suite
+- Comprehensive test suite — core algorithms (convex hull, BD-rate) lack tests despite numerical complexity
+- Scene-transition smoothing — per-shot ladders switch abruptly between shots
+- Audio optimization — audio bitrate split in per-title analysis
+- Screen content awareness — slides, code, UI content needs different encoding strategies
+- Streaming manifest output — produce HLS/DASH playlists from computed ladders
+- ABR switching optimization — ladder rungs tuned for client switching behavior, not just quality-spaced
+- Cost-aware optimization — factor storage/CDN cost into ladder selection
+- HW acceleration in quality measurement — VMAF runs on CPU via libvmaf; GPU-accelerated path
+
+### Limitations (design scope)
+
+viser is designed for content-adaptive VOD encoding and explicitly does not address:
+
+- **No ML prediction** — 42+ trial encodes per analysis every time; Bitmovin/Mux predict ladders from source features in minutes, not hours. viser measures, not predicts.
+- **No two-pass VBR** — CRF-only for trial encodes; no mapping to production VBR encodes. Users must map CRF → VBR themselves after analysis.
+- **No HDR support** — PQ/HLG content produces incorrect VMAF scores (libvmaf assumes SDR). HDR-aware metrics needed.
+- **No hardware encoders** — NVENC, QuickSync, VideoToolbox not integrated. Software encoders only (libx264, libx265, libsvtav1).
+- **No streaming-aware optimization** — produces JSON ladders, not HLS/DASH manifests. ABR switching behavior not modeled.
 
 ## Documentation
 
