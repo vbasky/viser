@@ -1,5 +1,11 @@
 # viser — Video Encoding Optimizer
 
+<p align="center">
+  <img src="docs/banner.png" alt="viser — Video Encoding Optimizer">
+</p>
+
+**Name:** *Viser* blends *vision* + *optimizer* — it sees the optimal encoding for every video. It's also French *viser* ("to aim/see").
+
 [![crates.io](https://img.shields.io/crates/v/viser-cli?logo=rust&color=orange)](https://crates.io/crates/viser-cli)
 [![docs.rs](https://img.shields.io/docsrs/viser-cli?logo=docsdotrs)](https://docs.rs/viser-cli)
 [![CI](https://img.shields.io/github/actions/workflow/status/vbasky/viser/ci.yml?branch=master&logo=github&label=CI)](https://github.com/vbasky/viser/actions)
