@@ -173,3 +173,120 @@ fn parse_vmaf_log(data: &[u8], per_frame: bool) -> anyhow::Result<Result> {
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_metric_serde_roundtrip() {
+        for m in &[Metric::Vmaf, Metric::Psnr, Metric::Ssim] {
+            let json = serde_json::to_string(m).unwrap();
+            let back: Metric = serde_json::from_str(&json).unwrap();
+            assert_eq!(*m, back);
+        }
+    }
+
+    #[test]
+    fn test_metric_serde_names() {
+        assert_eq!(serde_json::to_string(&Metric::Vmaf).unwrap(), "\"vmaf\"");
+        assert_eq!(serde_json::to_string(&Metric::Psnr).unwrap(), "\"psnr\"");
+        assert_eq!(serde_json::to_string(&Metric::Ssim).unwrap(), "\"ssim\"");
+    }
+
+    #[test]
+    fn test_metric_eq() {
+        assert_eq!(Metric::Vmaf, Metric::Vmaf);
+        assert_ne!(Metric::Vmaf, Metric::Psnr);
+    }
+
+    #[test]
+    fn test_result_default() {
+        let r = Result::default();
+        assert!((r.vmaf - 0.0).abs() < 1e-9);
+        assert!((r.psnr - 0.0).abs() < 1e-9);
+        assert!((r.ssim - 0.0).abs() < 1e-9);
+        assert!(r.frames.is_empty());
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_basic() {
+        let json = br#"{
+            "frames": [
+                {"frameNum": 0, "metrics": {"vmaf": 85.0, "psnr_y": 38.5, "float_ssim": 0.95}}
+            ],
+            "pooled_metrics": {
+                "vmaf": {"mean": 86.5},
+                "psnr_y": {"mean": 39.2},
+                "float_ssim": {"mean": 0.96}
+            }
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        assert!((result.vmaf - 86.5).abs() < 1e-9);
+        assert!((result.psnr - 39.2).abs() < 1e-9);
+        assert!((result.ssim - 0.96).abs() < 1e-9);
+        assert!(result.frames.is_empty());
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_per_frame() {
+        let json = br#"{
+            "frames": [
+                {"frameNum": 0, "metrics": {"vmaf": 80.0, "psnr_y": 37.0, "float_ssim": 0.93}},
+                {"frameNum": 1, "metrics": {"vmaf": 90.0, "psnr_y": 40.0, "float_ssim": 0.97}}
+            ],
+            "pooled_metrics": {
+                "vmaf": {"mean": 85.0},
+                "psnr_y": {"mean": 38.5},
+                "float_ssim": {"mean": 0.95}
+            }
+        }"#;
+        let result = parse_vmaf_log(json, true).unwrap();
+        assert_eq!(result.frames.len(), 2);
+        assert_eq!(result.frames[0].frame_num, 0);
+        assert!((result.frames[0].vmaf - 80.0).abs() < 1e-9);
+        assert_eq!(result.frames[1].frame_num, 1);
+        assert!((result.frames[1].vmaf - 90.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_fallback_psnr() {
+        let json = br#"{
+            "frames": [],
+            "pooled_metrics": {
+                "vmaf": {"mean": 85.0},
+                "psnr": {"mean": 39.0},
+                "ssim": {"mean": 0.94}
+            }
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        assert!((result.psnr - 39.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_missing_metrics() {
+        let json = br#"{
+            "frames": [],
+            "pooled_metrics": {}
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        assert!((result.vmaf - 0.0).abs() < 1e-9);
+        assert!((result.psnr - 0.0).abs() < 1e-9);
+        assert!((result.ssim - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_invalid_json() {
+        assert!(parse_vmaf_log(b"not json", false).is_err());
+    }
+
+    #[test]
+    fn test_measure_opts_default() {
+        let opts = MeasureOpts::default();
+        assert_eq!(opts.metrics.len(), 3);
+        assert_eq!(opts.subsample, 0);
+        assert_eq!(opts.model, "vmaf_v0.6.1");
+        assert!(!opts.per_frame);
+        assert!(opts.probe_cache.is_none());
+    }
+}

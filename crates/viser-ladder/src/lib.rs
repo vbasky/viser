@@ -161,3 +161,223 @@ impl Ladder {
         (1.0 - top.bitrate / fixed_bitrate) * 100.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use viser_ffmpeg::{Codec, Resolution};
+    use viser_hull::{Hull, Point};
+
+    fn point(bitrate: f64, vmaf: f64) -> Point {
+        Point {
+            resolution: Resolution::new(1920, 1080),
+            codec: Codec::X264,
+            crf: 23,
+            bitrate,
+            vmaf,
+            psnr: 0.0,
+            ssim: 0.0,
+        }
+    }
+
+    fn hull_for(points: Vec<Point>) -> Hull {
+        viser_hull::compute_upper(&points)
+    }
+
+    #[test]
+    fn test_select_empty_hull() {
+        let h = Hull { points: vec![] };
+        let ladder = select(&h, &Opts::default());
+        assert!(ladder.rungs.is_empty());
+    }
+
+    #[test]
+    fn test_select_zero_rungs() {
+        let h = hull_for(vec![point(500.0, 80.0), point(1000.0, 90.0)]);
+        let ladder = select(&h, &Opts { num_rungs: 0, ..Opts::default() });
+        assert!(ladder.rungs.is_empty());
+    }
+
+    #[test]
+    fn test_select_fewer_candidates_than_rungs() {
+        let h = hull_for(vec![point(500.0, 80.0), point(1000.0, 90.0)]);
+        let ladder = select(&h, &Opts { num_rungs: 6, ..Opts::default() });
+        assert!(!ladder.rungs.is_empty());
+        assert!(ladder.rungs.len() <= 2);
+    }
+
+    #[test]
+    fn test_select_filters_outside_bitrate_range() {
+        let h = hull_for(vec![
+            point(100.0, 50.0),
+            point(500.0, 80.0),
+            point(1000.0, 90.0),
+            point(10000.0, 98.0),
+        ]);
+        let opts = Opts {
+            num_rungs: 4,
+            min_bitrate: 200.0,
+            max_bitrate: 5000.0,
+            ..Opts::default()
+        };
+        let ladder = select(&h, &opts);
+        for rung in &ladder.rungs {
+            assert!(rung.point.bitrate >= 200.0);
+            assert!(rung.point.bitrate <= 5000.0);
+        }
+    }
+
+    #[test]
+    fn test_select_filters_below_min_vmaf() {
+        let h = hull_for(vec![
+            point(200.0, 30.0),
+            point(500.0, 60.0),
+            point(1000.0, 85.0),
+            point(2000.0, 95.0),
+        ]);
+        let opts = Opts {
+            num_rungs: 4,
+            min_vmaf: 50.0,
+            ..Opts::default()
+        };
+        let ladder = select(&h, &opts);
+        for rung in &ladder.rungs {
+            assert!(rung.point.vmaf >= 50.0);
+        }
+    }
+
+    #[test]
+    fn test_select_output_sorted() {
+        let h = hull_for(vec![
+            point(500.0, 70.0),
+            point(1000.0, 85.0),
+            point(2000.0, 93.0),
+            point(5000.0, 98.0),
+        ]);
+        let ladder = select(&h, &Opts::default());
+        assert!(ladder.rungs.windows(2).all(|w| w[0].point.bitrate <= w[1].point.bitrate));
+    }
+
+    #[test]
+    fn test_select_rung_indices() {
+        let h = hull_for(vec![
+            point(500.0, 70.0),
+            point(1000.0, 85.0),
+            point(2000.0, 93.0),
+        ]);
+        let ladder = select(&h, &Opts { num_rungs: 3, ..Opts::default() });
+        for (i, rung) in ladder.rungs.iter().enumerate() {
+            assert_eq!(rung.index as usize, i);
+        }
+    }
+
+    #[test]
+    fn test_bitrate_range_empty() {
+        let ladder = Ladder { rungs: vec![] };
+        assert_eq!(ladder.bitrate_range(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn test_bitrate_range() {
+        let rungs = vec![
+            Rung { point: point(500.0, 70.0), index: 0 },
+            Rung { point: point(2000.0, 93.0), index: 1 },
+        ];
+        let ladder = Ladder { rungs };
+        assert_eq!(ladder.bitrate_range(), (500.0, 2000.0));
+    }
+
+    #[test]
+    fn test_quality_range_empty() {
+        let ladder = Ladder { rungs: vec![] };
+        assert_eq!(ladder.quality_range(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn test_quality_range() {
+        let rungs = vec![
+            Rung { point: point(500.0, 70.0), index: 0 },
+            Rung { point: point(2000.0, 93.0), index: 1 },
+        ];
+        let ladder = Ladder { rungs };
+        assert_eq!(ladder.quality_range(), (70.0, 93.0));
+    }
+
+    #[test]
+    fn test_savings_empty() {
+        let ladder = Ladder { rungs: vec![] };
+        assert_eq!(ladder.savings(8000.0), 0.0);
+    }
+
+    #[test]
+    fn test_savings_zero_fixed() {
+        let rungs = vec![Rung { point: point(2000.0, 93.0), index: 0 }];
+        let ladder = Ladder { rungs };
+        assert_eq!(ladder.savings(0.0), 0.0);
+    }
+
+    #[test]
+    fn test_savings_no_savings() {
+        let rungs = vec![Rung { point: point(8000.0, 93.0), index: 0 }];
+        let ladder = Ladder { rungs };
+        assert_eq!(ladder.savings(8000.0), 0.0);
+    }
+
+    #[test]
+    fn test_savings_calculated() {
+        let rungs = vec![Rung { point: point(4000.0, 93.0), index: 0 }];
+        let ladder = Ladder { rungs };
+        let s = ladder.savings(8000.0);
+        assert!((s - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_netflix_old_ladder() {
+        let ladder = netflix_old();
+        assert_eq!(ladder.name, "Netflix Fixed (2015)");
+        assert_eq!(ladder.rungs.len(), 10);
+        assert!((ladder.total_bitrate() - 20170.0).abs() < 1e-9);
+        assert!((ladder.top_bitrate() - 5800.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_apple_hls_ladder() {
+        let ladder = apple_hls();
+        assert_eq!(ladder.name, "Apple HLS (2024)");
+        assert_eq!(ladder.rungs.len(), 9);
+        assert!((ladder.total_bitrate() - 25640.0).abs() < 1e-9);
+        assert!((ladder.top_bitrate() - 7800.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_select_respects_max_vmaf() {
+        let h = hull_for(vec![
+            point(500.0, 70.0),
+            point(1000.0, 85.0),
+            point(2000.0, 90.0),
+            point(3000.0, 93.0),
+            point(5000.0, 98.0),
+        ]);
+        let opts = Opts {
+            num_rungs: 3,
+            max_vmaf: 90.0,
+            ..Opts::default()
+        };
+        let ladder = select(&h, &opts);
+        // max_vmaf caps quality target range so targets are [70, 80, 90]
+        // without max_vmaf, targets would reach higher, changing selection
+        assert!(!ladder.rungs.is_empty());
+        // The highest vmaf candidate closest to target=90.0 is 90.0 itself
+        assert!(ladder.rungs.last().unwrap().point.vmaf <= 90.0 + 1e-9);
+    }
+
+    #[test]
+    fn test_opts_default() {
+        let opts = Opts::default();
+        assert_eq!(opts.num_rungs, 6);
+        assert!((opts.min_bitrate - 200.0).abs() < 1e-9);
+        assert!((opts.max_bitrate - 8000.0).abs() < 1e-9);
+        assert!((opts.min_vmaf - 40.0).abs() < 1e-9);
+        assert!((opts.max_vmaf - 97.0).abs() < 1e-9);
+    }
+}

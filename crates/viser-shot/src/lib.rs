@@ -162,3 +162,185 @@ fn build_shots(
 
     shots
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_field_basic() {
+        let line = "frame: 123 pts_time: 5.500 foo: bar";
+        assert_eq!(extract_field(line, "pts_time:"), Some("5.500"));
+    }
+
+    #[test]
+    fn test_extract_field_not_found() {
+        let line = "frame: 123 foo: bar";
+        assert_eq!(extract_field(line, "pts_time:"), None);
+    }
+
+    #[test]
+    fn test_extract_field_end_of_string() {
+        let line = "key: value";
+        assert_eq!(extract_field(line, "key:"), Some("value"));
+    }
+
+    #[test]
+    fn test_parse_scdet_output_empty() {
+        let result = parse_scdet_output("");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scdet_output_no_changes() {
+        let output = "\
+frame: 1 pts_time:1.000
+frame: 2 pts_time:2.000
+";
+        let result = parse_scdet_output(output);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scdet_output_with_score() {
+        let output = "\
+frame: 1 pts_time:1.000
+frame: 2 pts_time:2.000
+lavfi.scd.score=15.5
+frame: 3 pts_time:3.000
+";
+        let result = parse_scdet_output(output);
+        assert_eq!(result.len(), 1);
+        assert!((result[0].score - 15.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_scdet_output_multiple() {
+        let output = "\
+frame: 1 pts_time:1.000
+lavfi.scd.score=12.0
+frame: 2 pts_time:2.000
+frame: 3 pts_time:3.000
+lavfi.scd.score=45.5
+frame: 4 pts_time:4.000
+";
+        let result = parse_scdet_output(output);
+        assert_eq!(result.len(), 2);
+        assert!((result[0].score - 12.0).abs() < 1e-9);
+        assert!((result[1].score - 45.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_scdet_output_ignores_zero_score() {
+        let output = "\
+frame: 1 pts_time:1.000
+lavfi.scd.score=0.0
+frame: 2 pts_time:2.000
+lavfi.scd.score=25.0
+";
+        let result = parse_scdet_output(output);
+        assert_eq!(result.len(), 1);
+        assert!((result[0].score - 25.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_build_shots_no_boundaries() {
+        let shots = build_shots(&[], Duration::from_secs(10), Duration::from_millis(500));
+        assert_eq!(shots.len(), 1);
+        assert_eq!(shots[0].start, Duration::ZERO);
+        assert_eq!(shots[0].end, Duration::from_secs(10));
+        assert_eq!(shots[0].index, 0);
+    }
+
+    #[test]
+    fn test_build_shots_single_boundary() {
+        let boundaries = vec![
+            super::SceneChange { pts: Duration::from_secs(4), score: 20.0 },
+        ];
+        let shots = build_shots(&boundaries, Duration::from_secs(10), Duration::from_millis(500));
+        assert_eq!(shots.len(), 2);
+        assert_eq!(shots[0].start, Duration::ZERO);
+        assert_eq!(shots[0].end, Duration::from_secs(4));
+        assert_eq!(shots[0].score, 20.0);
+        assert_eq!(shots[1].start, Duration::from_secs(4));
+        assert_eq!(shots[1].end, Duration::from_secs(10));
+        assert_eq!(shots[1].score, 0.0);
+    }
+
+    #[test]
+    fn test_build_shots_merges_short_shots() {
+        let boundaries = vec![
+            super::SceneChange { pts: Duration::from_millis(200), score: 15.0 },
+        ];
+        let shots = build_shots(&boundaries, Duration::from_secs(10), Duration::from_millis(500));
+        // First shot can't be merged (nothing to merge into), so we get 2 shots
+        assert_eq!(shots.len(), 2);
+        assert_eq!(shots[0].start, Duration::ZERO);
+        assert_eq!(shots[0].end, Duration::from_millis(200));
+    }
+
+    #[test]
+    fn test_build_shots_merges_short_middle_shot() {
+        // Boundary at 200ms creates a short first shot (unmergeable).
+        // Boundary at 300ms would create a 100ms shot between 200ms-300ms,
+        // which gets merged into the previous shot.
+        let boundaries = vec![
+            super::SceneChange { pts: Duration::from_millis(200), score: 15.0 },
+            super::SceneChange { pts: Duration::from_millis(300), score: 20.0 },
+        ];
+        let shots = build_shots(&boundaries, Duration::from_secs(10), Duration::from_millis(500));
+        // Shot1 [0, 200ms) = 200ms (first, can't merge)
+        // Shot2 [200ms, 300ms) = 100ms (short, merges into shot1) -> shot1 becomes [0, 300ms)
+        // Final [300ms, 10s) = 9.7s
+        assert_eq!(shots.len(), 2);
+        assert_eq!(shots[0].start, Duration::ZERO);
+        assert_eq!(shots[0].end, Duration::from_millis(300));
+        assert_eq!(shots[1].start, Duration::from_millis(300));
+    }
+
+    #[test]
+    fn test_build_shots_reindexes() {
+        let boundaries = vec![
+            super::SceneChange { pts: Duration::from_secs(2), score: 10.0 },
+            super::SceneChange { pts: Duration::from_secs(5), score: 20.0 },
+        ];
+        let shots = build_shots(&boundaries, Duration::from_secs(10), Duration::from_millis(500));
+        for (i, s) in shots.iter().enumerate() {
+            assert_eq!(s.index as usize, i);
+        }
+        assert_eq!(shots.len(), 3);
+    }
+
+    #[test]
+    fn test_shot_serde_roundtrip() {
+        let shot = Shot {
+            index: 2,
+            start: Duration::from_secs(5),
+            end: Duration::from_secs(10),
+            duration: Duration::from_secs(5),
+            score: 42.5,
+        };
+        let json = serde_json::to_string(&shot).unwrap();
+        let back: Shot = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.index, 2);
+        assert!((back.score - 42.5).abs() < 1e-9);
+        assert_eq!(back.start.as_secs(), 5);
+    }
+
+    #[test]
+    fn test_detect_opts_default() {
+        let opts = DetectOpts::default();
+        assert!((opts.threshold - 10.0).abs() < 1e-9);
+        assert_eq!(opts.min_duration, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_build_shots_skips_same_pts() {
+        let boundaries = vec![
+            super::SceneChange { pts: Duration::from_secs(5), score: 10.0 },
+            super::SceneChange { pts: Duration::from_secs(5), score: 15.0 },
+        ];
+        let shots = build_shots(&boundaries, Duration::from_secs(10), Duration::from_millis(500));
+        assert_eq!(shots.len(), 2); // second boundary at same PTS is skipped
+    }
+}

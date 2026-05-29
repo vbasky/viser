@@ -216,3 +216,174 @@ fn mean(vals: &[f64]) -> f64 {
 fn max_val(vals: &[f64]) -> f64 {
     vals.iter().copied().fold(f64::NEG_INFINITY, f64::max)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(pts_secs: f64, spatial: f64, temporal: f64, dct: f64) -> FrameComplexity {
+        FrameComplexity {
+            pts: Duration::from_secs_f64(pts_secs),
+            spatial,
+            temporal,
+            dct_energy: dct,
+        }
+    }
+
+    #[test]
+    fn test_mean_empty() {
+        assert!((mean(&[]) - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_mean_single() {
+        assert!((mean(&[42.0]) - 42.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_mean_multiple() {
+        assert!((mean(&[1.0, 2.0, 3.0]) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_max_val_empty_negative_inf() {
+        assert!(max_val(&[]).is_infinite() && max_val(&[]).is_sign_negative());
+    }
+
+    #[test]
+    fn test_max_val() {
+        assert!((max_val(&[1.0, 5.0, 3.0]) - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_compute_score_bounds() {
+        let s = compute_score(0.5, 0.0);
+        assert!(s >= 0.0 && s <= 100.0);
+    }
+
+    #[test]
+    fn test_compute_score_zero_input() {
+        let s = compute_score(0.0, 0.0);
+        assert!(s >= 0.0);
+    }
+
+    #[test]
+    fn test_compute_score_high_input() {
+        let s = compute_score(1.0, 30.0); // temporal 30*3.33=99.9, spatial (1-0.5)*200=100
+        assert!(s <= 100.0);
+        assert!(s > 50.0);
+    }
+
+    #[test]
+    fn test_compute_score_with_dct() {
+        let s = compute_score_with_dct(0.5, 0.0, 0.0);
+        assert!(s >= 0.0);
+    }
+
+    #[test]
+    fn test_parse_complexity_output_empty() {
+        let frames = parse_complexity_output("");
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn test_parse_complexity_output_basic() {
+        let output = "\
+frame: 1 pts_time:0.000
+lavfi.entropy.normalized_entropy.normal.Y=0.6
+lavfi.signalstats.YDIF=2.5
+lavfi.signalstats.YHIGH=100.0
+lavfi.signalstats.YLOW=30.0
+frame: 2 pts_time:1.000
+lavfi.entropy.normalized_entropy.normal.Y=0.7
+lavfi.signalstats.YDIF=3.0
+lavfi.signalstats.YHIGH=120.0
+lavfi.signalstats.YLOW=40.0
+";
+        let frames = parse_complexity_output(output);
+        assert_eq!(frames.len(), 2);
+
+        assert!((frames[0].spatial - 0.6).abs() < 1e-9);
+        assert!((frames[0].temporal - 2.5).abs() < 1e-9);
+        assert!((frames[0].dct_energy - 70.0).abs() < 1e-9); // 100 - 30
+
+        assert!((frames[1].spatial - 0.7).abs() < 1e-9);
+        assert!((frames[1].temporal - 3.0).abs() < 1e-9);
+        assert!((frames[1].dct_energy - 80.0).abs() < 1e-9); // 120 - 40
+    }
+
+    #[test]
+    fn test_parse_complexity_output_handles_partial_data() {
+        let output = "\
+frame: 1 pts_time:0.000
+lavfi.entropy.normalized_entropy.normal.Y=0.5
+frame: 2 pts_time:1.000
+lavfi.signalstats.YDIF=1.0
+";
+        let frames = parse_complexity_output(output);
+        assert_eq!(frames.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_complexity_output_negative_dct() {
+        // If YLOW > YHIGH, dct_energy should clamp to 0
+        let output = "\
+frame: 1 pts_time:0.000
+lavfi.signalstats.YHIGH=30.0
+lavfi.signalstats.YLOW=50.0
+";
+        let frames = parse_complexity_output(output);
+        assert!((frames[0].dct_energy - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_aggregate_segments_single_segment() {
+        let frames = vec![
+            frame(0.0, 0.5, 1.0, 10.0),
+            frame(0.5, 0.6, 2.0, 20.0),
+            frame(1.0, 0.7, 3.0, 30.0),
+        ];
+        let segs = aggregate_segments(&frames, Duration::from_secs(2), Duration::from_secs(2));
+        assert_eq!(segs.len(), 1);
+        assert!((segs[0].avg_spatial - 0.6).abs() < 0.01);
+        assert!((segs[0].avg_temporal - 2.0).abs() < 0.01);
+        assert!((segs[0].max_spatial - 0.7).abs() < 1e-9);
+        assert_eq!(segs[0].start, Duration::ZERO);
+        assert_eq!(segs[0].end, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn test_aggregate_segments_multiple() {
+        let frames = vec![
+            frame(0.0, 0.4, 1.0, 5.0),
+            frame(0.5, 0.5, 1.5, 6.0),
+            frame(1.0, 0.6, 2.0, 7.0),
+            frame(1.5, 0.7, 2.5, 8.0),
+            frame(2.0, 0.8, 3.0, 9.0),
+            frame(2.5, 0.9, 3.5, 10.0),
+        ];
+        let segs = aggregate_segments(&frames, Duration::from_secs(3), Duration::from_secs(1));
+        assert_eq!(segs.len(), 3);
+        assert_eq!(segs[0].start, Duration::from_secs(0));
+        assert_eq!(segs[1].start, Duration::from_secs(1));
+        assert_eq!(segs[2].start, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn test_aggregate_segments_empty_bucket() {
+        // Evenly spaced frames with a gap
+        let frames = vec![
+            frame(0.0, 0.5, 1.0, 5.0),
+            frame(3.0, 0.8, 3.0, 10.0),
+        ];
+        let segs = aggregate_segments(&frames, Duration::from_secs(4), Duration::from_secs(2));
+        assert_eq!(segs.len(), 2); // seg 0 has frame[0], seg 1 has frame[1]
+    }
+
+    #[test]
+    fn test_analyze_opts_default() {
+        let opts = AnalyzeOpts::default();
+        assert_eq!(opts.segment_duration, Duration::from_secs(2));
+        assert_eq!(opts.subsample, 1);
+    }
+}
