@@ -4,6 +4,9 @@ on:
   push:
     tags: [v*]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 permissions:
   contents: write
 
@@ -11,8 +14,8 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      ARCHIVE_NAME: viser-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.ext }}
+
     strategy:
       matrix:
         include:
@@ -49,30 +52,25 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          archive="viser-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
-          tar czf "${archive}" viser
-          echo "archive=${archive}" >> "$GITHUB_ENV"
+          tar czf "${ARCHIVE_NAME}" viser
 
       - name: Archive (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          archive="viser-${{ github.ref_name }}-${{ matrix.target }}.zip"
-          7z a "${archive}" viser.exe
-          echo "archive=${archive}" >> "$GITHUB_ENV"
+          7z a "${ARCHIVE_NAME}" viser.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/${{ env.archive }}
+          path: target/${{ matrix.target }}/release/${{ env.ARCHIVE_NAME }}
 
   release:
     name: Create GitHub Release
     needs: [build]
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -142,3 +140,82 @@ jobs:
             end
           end
           RUBY
+
+  publish-crates:
+    name: Publish crates.io packages
+    needs: [release]
+    runs-on: ubuntu-latest
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        run: rustup update stable --no-self-update
+
+      - name: Publish crates in dependency order
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${VERSION#v}"
+          crates=(
+            viser-ffmpeg
+            viser-quality
+            viser-hull
+            viser-ladder
+            viser-shot
+            viser-complexity
+            viser-encoding
+            viser-checkpoint
+            viser-pertitle
+            viser-pershot
+            viser-persegment
+            viser-contextaware
+            viser-compare
+            viser-chart
+            viser-cli
+          )
+
+          crate_published() {
+            local crate="$1"
+            local http_status
+            http_status=$(curl -s -o /dev/null -w '%{http_code}' \
+              "https://crates.io/api/v1/crates/${crate}/${version}")
+            [[ "$http_status" == "200" ]]
+          }
+
+          publish_with_retries() {
+            local crate="$1"
+            local attempts=5
+            local delay=20
+
+            if crate_published "$crate"; then
+              echo "==> ${crate} ${version} already published; skipping"
+              return 0
+            fi
+
+            for attempt in $(seq 1 "$attempts"); do
+              echo "==> Publishing ${crate} ${version} (attempt ${attempt}/${attempts})"
+              if cargo publish -p "$crate" --locked; then
+                return 0
+              fi
+
+              if crate_published "$crate"; then
+                echo "==> ${crate} ${version} became available after publish attempt; continuing"
+                return 0
+              fi
+
+              if [[ "$attempt" -lt "$attempts" ]]; then
+                echo "==> Waiting ${delay}s before retry"
+                sleep "$delay"
+              fi
+            done
+
+            echo "ERROR: failed to publish ${crate} ${version} after ${attempts} attempts" >&2
+            return 1
+          }
+
+          for crate in "${crates[@]}"; do
+            publish_with_retries "$crate"
+          done
