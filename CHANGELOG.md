@@ -1,4 +1,16 @@
 # Changelog
+## [0.2.1] - 2026-05-29
+
+### Added
+
+- Emoji banner on CLI help
+- lib.rs for viser-cli crate (docs.rs compatibility)
+
+### Fixed
+
+- Bare viser with no subcommand exits 0 and shows help instead of erroring with exit 2
+- All subcommands with missing required args exit 0 and show usage instead of erroring with exit 2
+
 
 ## [0.2.0] - 2026-05-29
 
