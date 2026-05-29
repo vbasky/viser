@@ -2,18 +2,23 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use viser_encoding::clean_stale_temp_dirs;
 
 #[derive(Parser)]
-#[command(name = "viser", about = "Video Encoding Optimizer")]
+#[command(
+    name = "viser",
+    about = "",
+    subcommand_required = false,
+    before_help = "  📈 viser\n\n  🎬 video encoding optimizer\n  per-title analysis, per-shot refinement, quality metrics",
+)]
 struct Cli {
     /// Enable debug logging
     #[arg(short, long)]
     verbose: bool,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -373,7 +378,20 @@ struct CompareArgs {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            if e.kind() == clap::error::ErrorKind::DisplayHelp
+                || e.kind() == clap::error::ErrorKind::DisplayVersion
+            {
+                let _ = e.exit();
+            } else {
+                let _ = e.print();
+            }
+            println!();
+            return Ok(());
+        },
+    };
 
     // Init logging
     let level: tracing::Level =
@@ -383,7 +401,14 @@ async fn main() -> anyhow::Result<()> {
     // Clean stale temp dirs
     clean_stale_temp_dirs(Duration::from_secs(24 * 3600));
 
-    match cli.command {
+    let Some(command) = cli.command else {
+        // No subcommand — show help and exit cleanly
+        let _ = Cli::command().print_help();
+        println!();
+        return Ok(());
+    };
+
+    match command {
         Commands::Encode(args) => cmd_encode(args).await,
         Commands::Inspect { command } => match command {
             InspectCommands::Probe { file } => cmd_inspect_probe(&file).await,
