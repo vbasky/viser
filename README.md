@@ -9,10 +9,8 @@
 [![crates.io](https://img.shields.io/crates/v/viser-cli?logo=rust&color=orange)](https://crates.io/crates/viser-cli)
 [![docs.rs](https://img.shields.io/docsrs/viser-cli?logo=docsdotrs)](https://docs.rs/viser-cli)
 [![CI](https://img.shields.io/github/actions/workflow/status/vbasky/viser/ci.yml?branch=master&logo=github&label=CI)](https://github.com/vbasky/viser/actions)
-[![License](https://img.shields.io/crates/l/viser-cli)](LICENSE)
+[![License](https://img.shields.io/github/license/vbasky/viser)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-blue)](https://www.rust-lang.org)
-
-**Name:** *Viser* blends *vision* + *optimizer* — it sees the optimal encoding for every video. It's also French *viser* ("to aim/see").
 
 **Acknowledgment:** viser builds on decades of research in rate-distortion theory,
 perceptual quality measurement, and content-adaptive streaming. Thank you to the
@@ -46,7 +44,7 @@ bitrates.
 
 ## Architecture
 
-```
+```bash
 viser/
 ├── crates/
 │   ├── viser-ffmpeg/         FFmpeg/FFprobe wrapper (encode, probe, path, cache)
@@ -159,6 +157,7 @@ All four optimization methods ported from the prior Go implementation.
 - **Context-Aware** — Device profiles (mobile/desktop/TV/4K TV) with resolution caps, codec preferences, VMAF model selection.
 
 ### Backlog
+
 - Chart generation (plotters integration — not yet wired into CLI)
 - Chunked encoding — parallel/distributed encoding across machines
 - REST API

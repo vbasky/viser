@@ -14,7 +14,7 @@ jobs:
     name: check + test + lint + doc
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: install system deps
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
@@ -26,7 +26,7 @@ jobs:
           rustup component add clippy rustfmt
 
       - name: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
