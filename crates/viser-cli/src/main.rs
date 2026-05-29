@@ -10,7 +10,7 @@ use viser_encoding::clean_stale_temp_dirs;
     name = "viser",
     about = "",
     subcommand_required = false,
-    before_help = "  📈 viser\n\n  🎬 video encoding optimizer\n  per-title analysis, per-shot refinement, quality metrics",
+    before_help = "  📈 viser\n\n  🎬 video encoding optimizer\n  per-title analysis, per-shot refinement, quality metrics"
 )]
 struct Cli {
     /// Enable debug logging
@@ -390,7 +390,7 @@ async fn main() -> anyhow::Result<()> {
             }
             println!();
             return Ok(());
-        },
+        }
     };
 
     // Init logging
