@@ -274,7 +274,9 @@ mod tests {
     fn test_ffmpeg_path_respects_env() {
         // SAFETY: test-only env var manipulation, single-threaded test
         let old = std::env::var("VISER_FFMPEG").ok();
-        unsafe { std::env::set_var("VISER_FFMPEG", "/custom/ffmpeg"); }
+        unsafe {
+            std::env::set_var("VISER_FFMPEG", "/custom/ffmpeg");
+        }
         assert_eq!(ffmpeg_path(), "/custom/ffmpeg");
         unsafe {
             match old {
@@ -288,7 +290,9 @@ mod tests {
     fn test_ffprobe_path_respects_env() {
         // SAFETY: test-only env var manipulation, single-threaded test
         let old = std::env::var("VISER_FFPROBE").ok();
-        unsafe { std::env::set_var("VISER_FFPROBE", "/custom/ffprobe"); }
+        unsafe {
+            std::env::set_var("VISER_FFPROBE", "/custom/ffprobe");
+        }
         assert_eq!(ffprobe_path(), "/custom/ffprobe");
         unsafe {
             match old {

@@ -372,10 +372,7 @@ lavfi.signalstats.YLOW=50.0
     #[test]
     fn test_aggregate_segments_empty_bucket() {
         // Evenly spaced frames with a gap
-        let frames = vec![
-            frame(0.0, 0.5, 1.0, 5.0),
-            frame(3.0, 0.8, 3.0, 10.0),
-        ];
+        let frames = vec![frame(0.0, 0.5, 1.0, 5.0), frame(3.0, 0.8, 3.0, 10.0)];
         let segs = aggregate_segments(&frames, Duration::from_secs(4), Duration::from_secs(2));
         assert_eq!(segs.len(), 2); // seg 0 has frame[0], seg 1 has frame[1]
     }

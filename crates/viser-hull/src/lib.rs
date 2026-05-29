@@ -154,12 +154,8 @@ mod tests {
 
     #[test]
     fn test_compute_upper_monotonic() {
-        let points = vec![
-            point(100.0, 50.0),
-            point(500.0, 70.0),
-            point(1500.0, 90.0),
-            point(5000.0, 98.0),
-        ];
+        let points =
+            vec![point(100.0, 50.0), point(500.0, 70.0), point(1500.0, 90.0), point(5000.0, 98.0)];
         let hull = compute_upper(&points);
         assert_eq!(hull.points.len(), 4);
     }
@@ -185,12 +181,8 @@ mod tests {
 
     #[test]
     fn test_compute_upper_unsorted_input() {
-        let points = vec![
-            point(5000.0, 98.0),
-            point(100.0, 50.0),
-            point(1500.0, 90.0),
-            point(500.0, 70.0),
-        ];
+        let points =
+            vec![point(5000.0, 98.0), point(100.0, 50.0), point(1500.0, 90.0), point(500.0, 70.0)];
         let hull = compute_upper(&points);
         assert!(hull.points.windows(2).all(|w| w[0].bitrate <= w[1].bitrate));
     }
@@ -198,9 +190,33 @@ mod tests {
     #[test]
     fn test_compute_per_codec() {
         let points = vec![
-            Point { resolution: Resolution::new(1920, 1080), codec: Codec::X264, crf: 23, bitrate: 1000.0, vmaf: 90.0, psnr: 0.0, ssim: 0.0 },
-            Point { resolution: Resolution::new(1920, 1080), codec: Codec::X265, crf: 28, bitrate: 800.0, vmaf: 90.0, psnr: 0.0, ssim: 0.0 },
-            Point { resolution: Resolution::new(1920, 1080), codec: Codec::X264, crf: 23, bitrate: 2000.0, vmaf: 95.0, psnr: 0.0, ssim: 0.0 },
+            Point {
+                resolution: Resolution::new(1920, 1080),
+                codec: Codec::X264,
+                crf: 23,
+                bitrate: 1000.0,
+                vmaf: 90.0,
+                psnr: 0.0,
+                ssim: 0.0,
+            },
+            Point {
+                resolution: Resolution::new(1920, 1080),
+                codec: Codec::X265,
+                crf: 28,
+                bitrate: 800.0,
+                vmaf: 90.0,
+                psnr: 0.0,
+                ssim: 0.0,
+            },
+            Point {
+                resolution: Resolution::new(1920, 1080),
+                codec: Codec::X264,
+                crf: 23,
+                bitrate: 2000.0,
+                vmaf: 95.0,
+                psnr: 0.0,
+                ssim: 0.0,
+            },
         ];
         let hulls = compute_per_codec(&points);
         assert_eq!(hulls.len(), 2);
@@ -248,12 +264,8 @@ mod tests {
 
     #[test]
     fn test_bd_rate_identical_curves() {
-        let a = vec![
-            point(100.0, 60.0),
-            point(300.0, 70.0),
-            point(800.0, 80.0),
-            point(2000.0, 90.0),
-        ];
+        let a =
+            vec![point(100.0, 60.0), point(300.0, 70.0), point(800.0, 80.0), point(2000.0, 90.0)];
         let b = a.clone();
         let result = bd_rate(&a, &b).unwrap();
         assert!((result).abs() < 1.0, "identical curves should give ~0% BD-Rate, got {result}");
@@ -262,36 +274,20 @@ mod tests {
     #[test]
     fn test_bd_rate_negative_efficient() {
         // Curve B has lower bitrates for same quality -> negative BD-Rate
-        let a = vec![
-            point(200.0, 60.0),
-            point(500.0, 70.0),
-            point(1200.0, 80.0),
-            point(3000.0, 90.0),
-        ];
-        let b = vec![
-            point(150.0, 60.0),
-            point(400.0, 70.0),
-            point(1000.0, 80.0),
-            point(2500.0, 90.0),
-        ];
+        let a =
+            vec![point(200.0, 60.0), point(500.0, 70.0), point(1200.0, 80.0), point(3000.0, 90.0)];
+        let b =
+            vec![point(150.0, 60.0), point(400.0, 70.0), point(1000.0, 80.0), point(2500.0, 90.0)];
         let result = bd_rate(&a, &b).unwrap();
         assert!(result < 0.0, "more efficient codec should have negative BD-Rate, got {result}");
     }
 
     #[test]
     fn test_bd_rate_no_overlap() {
-        let a = vec![
-            point(100.0, 90.0),
-            point(300.0, 92.0),
-            point(800.0, 95.0),
-            point(2000.0, 98.0),
-        ];
-        let b = vec![
-            point(100.0, 50.0),
-            point(300.0, 55.0),
-            point(800.0, 60.0),
-            point(2000.0, 65.0),
-        ];
+        let a =
+            vec![point(100.0, 90.0), point(300.0, 92.0), point(800.0, 95.0), point(2000.0, 98.0)];
+        let b =
+            vec![point(100.0, 50.0), point(300.0, 55.0), point(800.0, 60.0), point(2000.0, 65.0)];
         assert!(bd_rate(&a, &b).is_err());
     }
 }

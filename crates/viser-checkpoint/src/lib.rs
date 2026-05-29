@@ -254,10 +254,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("checkpoint.json");
         let cp = Checkpoint::new(&path, "abc123", "test.mp4").unwrap();
-        cp.save("1920x1080", "libx264", 23, Point {
-            resolution: Resolution::new(1920, 1080),
-            codec: Codec::X264, crf: 23, bitrate: 1000.0, vmaf: 90.0, psnr: 0.0, ssim: 0.0,
-        }).unwrap();
+        cp.save(
+            "1920x1080",
+            "libx264",
+            23,
+            Point {
+                resolution: Resolution::new(1920, 1080),
+                codec: Codec::X264,
+                crf: 23,
+                bitrate: 1000.0,
+                vmaf: 90.0,
+                psnr: 0.0,
+                ssim: 0.0,
+            },
+        )
+        .unwrap();
         drop(cp);
 
         // Re-open with different hash
@@ -275,7 +286,12 @@ mod tests {
 
         let p = Point {
             resolution: Resolution::new(1920, 1080),
-            codec: Codec::X264, crf: 23, bitrate: 1000.0, vmaf: 90.0, psnr: 0.0, ssim: 0.0,
+            codec: Codec::X264,
+            crf: 23,
+            bitrate: 1000.0,
+            vmaf: 90.0,
+            psnr: 0.0,
+            ssim: 0.0,
         };
         cp.save("1920x1080", "libx264", 23, p).unwrap();
         assert_eq!(cp.all_completed().len(), 1);

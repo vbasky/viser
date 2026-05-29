@@ -214,12 +214,8 @@ mod tests {
             point(1000.0, 90.0),
             point(10000.0, 98.0),
         ]);
-        let opts = Opts {
-            num_rungs: 4,
-            min_bitrate: 200.0,
-            max_bitrate: 5000.0,
-            ..Opts::default()
-        };
+        let opts =
+            Opts { num_rungs: 4, min_bitrate: 200.0, max_bitrate: 5000.0, ..Opts::default() };
         let ladder = select(&h, &opts);
         for rung in &ladder.rungs {
             assert!(rung.point.bitrate >= 200.0);
@@ -235,11 +231,7 @@ mod tests {
             point(1000.0, 85.0),
             point(2000.0, 95.0),
         ]);
-        let opts = Opts {
-            num_rungs: 4,
-            min_vmaf: 50.0,
-            ..Opts::default()
-        };
+        let opts = Opts { num_rungs: 4, min_vmaf: 50.0, ..Opts::default() };
         let ladder = select(&h, &opts);
         for rung in &ladder.rungs {
             assert!(rung.point.vmaf >= 50.0);
@@ -260,11 +252,7 @@ mod tests {
 
     #[test]
     fn test_select_rung_indices() {
-        let h = hull_for(vec![
-            point(500.0, 70.0),
-            point(1000.0, 85.0),
-            point(2000.0, 93.0),
-        ]);
+        let h = hull_for(vec![point(500.0, 70.0), point(1000.0, 85.0), point(2000.0, 93.0)]);
         let ladder = select(&h, &Opts { num_rungs: 3, ..Opts::default() });
         for (i, rung) in ladder.rungs.iter().enumerate() {
             assert_eq!(rung.index as usize, i);
@@ -358,11 +346,7 @@ mod tests {
             point(3000.0, 93.0),
             point(5000.0, 98.0),
         ]);
-        let opts = Opts {
-            num_rungs: 3,
-            max_vmaf: 90.0,
-            ..Opts::default()
-        };
+        let opts = Opts { num_rungs: 3, max_vmaf: 90.0, ..Opts::default() };
         let ladder = select(&h, &opts);
         // max_vmaf caps quality target range so targets are [70, 80, 90]
         // without max_vmaf, targets would reach higher, changing selection

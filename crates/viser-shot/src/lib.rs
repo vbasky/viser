@@ -254,9 +254,7 @@ lavfi.scd.score=25.0
 
     #[test]
     fn test_build_shots_single_boundary() {
-        let boundaries = vec![
-            super::SceneChange { pts: Duration::from_secs(4), score: 20.0 },
-        ];
+        let boundaries = vec![super::SceneChange { pts: Duration::from_secs(4), score: 20.0 }];
         let shots = build_shots(&boundaries, Duration::from_secs(10), Duration::from_millis(500));
         assert_eq!(shots.len(), 2);
         assert_eq!(shots[0].start, Duration::ZERO);
@@ -269,9 +267,7 @@ lavfi.scd.score=25.0
 
     #[test]
     fn test_build_shots_merges_short_shots() {
-        let boundaries = vec![
-            super::SceneChange { pts: Duration::from_millis(200), score: 15.0 },
-        ];
+        let boundaries = vec![super::SceneChange { pts: Duration::from_millis(200), score: 15.0 }];
         let shots = build_shots(&boundaries, Duration::from_secs(10), Duration::from_millis(500));
         // First shot can't be merged (nothing to merge into), so we get 2 shots
         assert_eq!(shots.len(), 2);
