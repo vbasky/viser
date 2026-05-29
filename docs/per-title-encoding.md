@@ -5,7 +5,7 @@ title's content complexity**. Instead of using a fixed set of resolution/bitrate
 pairs for all content, it analyzes each title and selects the encoding parameters
 that maximize quality per bit.
 
-This is VEO's first and foundational optimization goal.
+This is viser's first and foundational optimization goal.
 
 ## The Problem: Fixed Bitrate Ladders
 
@@ -60,7 +60,7 @@ hull of P in (bitrate, quality) space.
 
 ### Algorithm: Andrew's Monotone Chain
 
-VEO computes the upper convex hull using Andrew's monotone chain algorithm,
+viser computes the upper convex hull using Andrew's monotone chain algorithm,
 adapted for our R-D optimization context:
 
 1. Sort all points by bitrate (ascending)
@@ -171,7 +171,7 @@ The talking head achieves VMAF 94 at 1.5 Mbps (720p), while the action sequence
 needs 8 Mbps (1080p) to reach the same quality. A fixed ladder would either waste
 bandwidth on the talking head or starve the action sequence.
 
-## VEO Pipeline
+## viser Pipeline
 
 ```
 1. Input: source video + configuration

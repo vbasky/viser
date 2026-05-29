@@ -1,0 +1,20 @@
+[package]
+name = "viser-shot"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shot/scene detection for viser using FFmpeg scdet"
+
+[lib]
+name = "viser_shot"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.1.0" }
+serde = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }

@@ -198,7 +198,7 @@ and what published research compares against. SSIMULACRA2 provides a valuable
 second opinion, especially for content types underrepresented in Netflix's
 training data.
 
-For VEO's per-title analysis, VMAF is the primary optimization target because:
+For viser's per-title analysis, VMAF is the primary optimization target because:
 1. Industry-standard comparison baseline
 2. Temporal awareness (important for video)
 3. Well-understood scoring thresholds (e.g., VMAF 93+ = transparent quality)

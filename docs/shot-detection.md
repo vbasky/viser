@@ -6,12 +6,12 @@ every other step depends on accurate shot boundaries.
 
 ## Current Implementation
 
-VEO uses FFmpeg's **scdet** (scene change detection) filter, which performs
+viser uses FFmpeg's **scdet** (scene change detection) filter, which performs
 bidirectional frame comparison. This is the same class of approach Netflix uses
 in their production per-shot encoding pipeline.
 
 ```bash
-veo per-shot detect -i video.mp4 --threshold 10
+viser per-shot detect -i video.mp4 --threshold 10
 ```
 
 ### How scdet Works
@@ -102,7 +102,7 @@ slower. Not widely adopted yet.
 
 ### FFmpeg select Filter (Previous Implementation)
 
-VEO's original detector. Uses forward-only frame comparison.
+viser's original detector. Uses forward-only frame comparison.
 
 ```bash
 ffmpeg -i video.mp4 -vf "select='gt(scene,0.3)',showinfo" -f null -

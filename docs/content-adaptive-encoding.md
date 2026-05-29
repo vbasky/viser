@@ -6,7 +6,7 @@ context, or both. Per-title and per-shot encoding are specific instances of CAE.
 This document covers the additional dimensions: device awareness, network
 adaptation, multi-codec optimization, and ML-driven prediction.
 
-This is VEO's fourth optimization goal, building on all prior foundations.
+This is viser's fourth optimization goal, building on all prior foundations.
 
 ## Beyond Content Complexity
 
@@ -240,10 +240,10 @@ granularity and context:
 
 ![Optimization Spectrum](images/optimization-spectrum.png)
 
-VEO's four methods (blue) progress from left to right (content granularity)
+viser's four methods (blue) progress from left to right (content granularity)
 and bottom to top (context awareness). External systems like TLadder
 (network-aware) and Mux Instant (ML-predicted) occupy higher context
-dimensions that VEO does not yet implement.
+dimensions that viser does not yet implement.
 
 ## Further Reading
 

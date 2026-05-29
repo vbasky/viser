@@ -1,22 +1,59 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
-    "crates/veo-ffmpeg",
-    "crates/veo-quality",
-    "crates/veo-hull",
-    "crates/veo-ladder",
-    "crates/veo-shot",
-    "crates/veo-complexity",
-    "crates/veo-encoding",
-    "crates/veo-checkpoint",
-    "crates/veo-pertitle",
-    "crates/veo-pershot",
-    "crates/veo-persegment",
-    "crates/veo-contextaware",
-    "crates/veo-compare",
-    "crates/veo-chart",
-    "crates/veo-cli",
+    "crates/viser-ffmpeg",
+    "crates/viser-quality",
+    "crates/viser-hull",
+    "crates/viser-ladder",
+    "crates/viser-shot",
+    "crates/viser-complexity",
+    "crates/viser-encoding",
+    "crates/viser-checkpoint",
+    "crates/viser-pertitle",
+    "crates/viser-pershot",
+    "crates/viser-persegment",
+    "crates/viser-contextaware",
+    "crates/viser-compare",
+    "crates/viser-chart",
+    "crates/viser-cli",
 ]
+
+[workspace.package]
+edition = "2024"
+license = "BSD-2-Clause"
+repository = "https://github.com/vbasky/viser"
+
+[workspace.lints.rust]
+unreachable_pub = "warn"
+unused_import_braces = "warn"
+unused_extern_crates = "warn"
+
+[workspace.lints.rustdoc]
+invalid_html_tags = "allow"
+broken_intra_doc_links = "allow"
+
+[workspace.lints.clippy]
+unwrap_used = "allow"
+doc_markdown = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+doc_lazy_continuation = "allow"
+explicit_counter_loop = "allow"
+field_reassign_with_default = "allow"
+if_same_then_else = "allow"
+manual_checked_ops = "allow"
+manual_strip = "allow"
+match_like_matches_macro = "allow"
+missing_safety_doc = "allow"
+needless_range_loop = "allow"
+same_item_push = "allow"
+type_complexity = "allow"
+unusual_byte_groupings = "allow"
+vec_init_then_push = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

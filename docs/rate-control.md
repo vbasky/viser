@@ -4,7 +4,7 @@ Rate control determines how a video encoder allocates bits across frames. The
 choice of mode affects both the quality of the output and the predictability of
 the bitrate - two properties that are fundamentally in tension.
 
-Understanding rate control is essential for VEO because the per-title pipeline
+Understanding rate control is essential for viser because the per-title pipeline
 uses **different modes for different phases**: CRF for analysis, and 2-pass VBR
 or capped CRF for delivery.
 
@@ -192,9 +192,9 @@ Netflix's Dynamic Optimizer follows the two-phase pattern:
 Netflix's David Ronca (Director of Encoding Technology) confirmed: "We started
 with QP and recently migrated to CRF. The results are about the same."
 
-## VEO's Approach
+## viser's Approach
 
-VEO uses **CRF for the analysis phase** (trial encodes to build the convex hull)
+viser uses **CRF for the analysis phase** (trial encodes to build the convex hull)
 and supports both **2-pass VBR and capped CRF for the delivery phase** (final
 encodes at selected operating points).
 

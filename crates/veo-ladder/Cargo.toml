@@ -1,9 +1,0 @@
-[package]
-name = "veo-ladder"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-veo-ffmpeg = { path = "../veo-ffmpeg" }
-veo-hull = { path = "../veo-hull" }
-serde = { workspace = true }

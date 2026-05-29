@@ -5,7 +5,7 @@ Instead of one ladder per video, each shot (a continuous sequence from a single
 camera setup) gets its own optimal encoding parameters, and bits are allocated
 across shots using Trellis optimization.
 
-This is VEO's second optimization goal, building on the per-title foundation.
+This is viser's second optimization goal, building on the per-title foundation.
 
 ## Why Shots?
 

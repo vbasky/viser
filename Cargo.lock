@@ -1164,19 +1164,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
-name = "veo-chart"
+name = "version_check"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "viser-chart"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "plotters",
  "png",
- "veo-ffmpeg",
- "veo-hull",
- "veo-ladder",
+ "viser-ffmpeg",
+ "viser-hull",
+ "viser-ladder",
 ]
 
 [[package]]
-name = "veo-checkpoint"
+name = "viser-checkpoint"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1185,11 +1191,11 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
- "veo-hull",
+ "viser-hull",
 ]
 
 [[package]]
-name = "veo-cli"
+name = "viser-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1199,24 +1205,24 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "veo-chart",
- "veo-checkpoint",
- "veo-compare",
- "veo-complexity",
- "veo-contextaware",
- "veo-encoding",
- "veo-ffmpeg",
- "veo-hull",
- "veo-ladder",
- "veo-persegment",
- "veo-pershot",
- "veo-pertitle",
- "veo-quality",
- "veo-shot",
+ "viser-chart",
+ "viser-checkpoint",
+ "viser-compare",
+ "viser-complexity",
+ "viser-contextaware",
+ "viser-encoding",
+ "viser-ffmpeg",
+ "viser-hull",
+ "viser-ladder",
+ "viser-persegment",
+ "viser-pershot",
+ "viser-pertitle",
+ "viser-quality",
+ "viser-shot",
 ]
 
 [[package]]
-name = "veo-compare"
+name = "viser-compare"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1226,43 +1232,43 @@ dependencies = [
 ]
 
 [[package]]
-name = "veo-complexity"
+name = "viser-complexity"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
  "tokio",
- "veo-ffmpeg",
+ "viser-ffmpeg",
 ]
 
 [[package]]
-name = "veo-contextaware"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "tokio",
- "tracing",
- "veo-encoding",
- "veo-ffmpeg",
- "veo-hull",
- "veo-ladder",
- "veo-pertitle",
-]
-
-[[package]]
-name = "veo-encoding"
+name = "viser-contextaware"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
  "tokio",
  "tracing",
- "veo-ffmpeg",
+ "viser-encoding",
+ "viser-ffmpeg",
+ "viser-hull",
+ "viser-ladder",
+ "viser-pertitle",
 ]
 
 [[package]]
-name = "veo-ffmpeg"
+name = "viser-encoding"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "tokio",
+ "tracing",
+ "viser-ffmpeg",
+]
+
+[[package]]
+name = "viser-ffmpeg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1274,37 +1280,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "veo-hull"
+name = "viser-hull"
 version = "0.1.0"
 dependencies = [
  "serde",
- "veo-ffmpeg",
+ "viser-ffmpeg",
 ]
 
 [[package]]
-name = "veo-ladder"
+name = "viser-ladder"
 version = "0.1.0"
 dependencies = [
  "serde",
- "veo-ffmpeg",
- "veo-hull",
+ "viser-ffmpeg",
+ "viser-hull",
 ]
 
 [[package]]
-name = "veo-persegment"
+name = "viser-persegment"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
  "tempfile",
  "tokio",
- "veo-complexity",
- "veo-ffmpeg",
- "veo-quality",
+ "viser-complexity",
+ "viser-ffmpeg",
+ "viser-quality",
 ]
 
 [[package]]
-name = "veo-pershot"
+name = "viser-pershot"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1312,16 +1318,16 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "veo-encoding",
- "veo-ffmpeg",
- "veo-hull",
- "veo-ladder",
- "veo-pertitle",
- "veo-shot",
+ "viser-encoding",
+ "viser-ffmpeg",
+ "viser-hull",
+ "viser-ladder",
+ "viser-pertitle",
+ "viser-shot",
 ]
 
 [[package]]
-name = "veo-pertitle"
+name = "viser-pertitle"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1330,16 +1336,16 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "veo-checkpoint",
- "veo-encoding",
- "veo-ffmpeg",
- "veo-hull",
- "veo-ladder",
- "veo-quality",
+ "viser-checkpoint",
+ "viser-encoding",
+ "viser-ffmpeg",
+ "viser-hull",
+ "viser-ladder",
+ "viser-quality",
 ]
 
 [[package]]
-name = "veo-quality"
+name = "viser-quality"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1348,24 +1354,18 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "veo-ffmpeg",
+ "viser-ffmpeg",
 ]
 
 [[package]]
-name = "veo-shot"
+name = "viser-shot"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
  "tokio",
- "veo-ffmpeg",
+ "viser-ffmpeg",
 ]
-
-[[package]]
-name = "version_check"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "walkdir"

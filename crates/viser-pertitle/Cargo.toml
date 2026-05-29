@@ -1,0 +1,28 @@
+[package]
+name = "viser-pertitle"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Per-title encoding pipeline with convex hull analysis for viser"
+
+[lib]
+name = "viser_pertitle"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.1.0" }
+viser-hull = { path = "../viser-hull", version = "0.1.0" }
+viser-ladder = { path = "../viser-ladder", version = "0.1.0" }
+viser-quality = { path = "../viser-quality", version = "0.1.0" }
+viser-encoding = { path = "../viser-encoding", version = "0.1.0" }
+viser-checkpoint = { path = "../viser-checkpoint", version = "0.1.0" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tempfile = "3"

@@ -1,0 +1,20 @@
+[package]
+name = "viser-compare"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Browser-based side-by-side comparison player with VMAF timeline for viser"
+
+[lib]
+name = "viser_compare"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }

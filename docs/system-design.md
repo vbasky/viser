@@ -1,37 +1,37 @@
-# VEO System Design
+# viser System Design
 
 ## Architecture Overview
 
 ```mermaid
 graph TB
-    subgraph CLI["veo-cli (Application Layer)"]
+    subgraph CLI["viser-cli (Application Layer)"]
         CMD[CLI Commands<br/>encode · inspect · quality<br/>per-title · per-shot · per-segment<br/>context-aware · compare]
     end
 
     subgraph Pipelines["Optimization Pipelines"]
-        PT[veo-pertitle<br/>Per-Title Analysis]
-        PS[veo-pershot<br/>Per-Shot + Trellis]
-        SEG[veo-persegment<br/>Segment CRF Adaptation]
-        CA[veo-contextaware<br/>Device-Specific Ladders]
+        PT[viser-pertitle<br/>Per-Title Analysis]
+        PS[viser-pershot<br/>Per-Shot + Trellis]
+        SEG[viser-persegment<br/>Segment CRF Adaptation]
+        CA[viser-contextaware<br/>Device-Specific Ladders]
     end
 
     subgraph Core["Core Analysis"]
-        HULL[veo-hull<br/>Convex Hull + BD-Rate]
-        LADDER[veo-ladder<br/>Rung Selection]
-        SHOT[veo-shot<br/>Scene Detection]
-        CX[veo-complexity<br/>Spatial/Temporal Analysis]
+        HULL[viser-hull<br/>Convex Hull + BD-Rate]
+        LADDER[viser-ladder<br/>Rung Selection]
+        SHOT[viser-shot<br/>Scene Detection]
+        CX[viser-complexity<br/>Spatial/Temporal Analysis]
     end
 
     subgraph Foundation["Foundation Layer"]
-        FF[veo-ffmpeg<br/>Encode · Probe · Cache]
-        QM[veo-quality<br/>VMAF · PSNR · SSIM]
-        ENC[veo-encoding<br/>Config · Presets · Progress]
-        CP[veo-checkpoint<br/>Resumable State]
+        FF[viser-ffmpeg<br/>Encode · Probe · Cache]
+        QM[viser-quality<br/>VMAF · PSNR · SSIM]
+        ENC[viser-encoding<br/>Config · Presets · Progress]
+        CP[viser-checkpoint<br/>Resumable State]
     end
 
     subgraph Output["Output & Visualization"]
-        CMP[veo-compare<br/>Browser Comparison Player]
-        CHT[veo-chart<br/>R-D Curve Charts]
+        CMP[viser-compare<br/>Browser Comparison Player]
+        CHT[viser-chart<br/>R-D Curve Charts]
     end
 
     CMD --> PT & PS & SEG & CA & CMP & CHT & FF & QM
@@ -60,7 +60,7 @@ graph TB
 
 ```mermaid
 flowchart LR
-    A[Video File] --> B[veo-ffmpeg<br/>probe]
+    A[Video File] --> B[viser-ffmpeg<br/>probe]
     B --> C[Trial Matrix<br/>res × codec × CRF]
     C --> D{Checkpoint<br/>exists?}
     D -- skip completed --> E
@@ -124,21 +124,21 @@ flowchart LR
 
 ```mermaid
 graph BT
-    FF[veo-ffmpeg]
-    QM[veo-quality]
-    HULL[veo-hull]
-    SHOT[veo-shot]
-    CX[veo-complexity]
-    ENC[veo-encoding]
-    CP[veo-checkpoint]
-    CMP[veo-compare]
-    CHT[veo-chart]
-    LADDER[veo-ladder]
-    PT[veo-pertitle]
-    PS[veo-pershot]
-    SEG[veo-persegment]
-    CA[veo-contextaware]
-    CLI[veo-cli]
+    FF[viser-ffmpeg]
+    QM[viser-quality]
+    HULL[viser-hull]
+    SHOT[viser-shot]
+    CX[viser-complexity]
+    ENC[viser-encoding]
+    CP[viser-checkpoint]
+    CMP[viser-compare]
+    CHT[viser-chart]
+    LADDER[viser-ladder]
+    PT[viser-pertitle]
+    PS[viser-pershot]
+    SEG[viser-persegment]
+    CA[viser-contextaware]
+    CLI[viser-cli]
 
     LADDER --> FF & HULL
     PT --> FF & QM & HULL & LADDER & ENC & CP

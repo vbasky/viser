@@ -1,0 +1,23 @@
+[package]
+name = "viser-quality"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "VMAF/PSNR/SSIM quality measurement for viser"
+
+[lib]
+name = "viser_quality"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.1.0" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tempfile = "3"

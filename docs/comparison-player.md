@@ -1,6 +1,6 @@
 # Comparison Player
 
-VEO includes a browser-based side-by-side video comparison player for visual
+viser includes a browser-based side-by-side video comparison player for visual
 QA of encoding results. It displays the reference and encoded video with a
 draggable slider, per-frame VMAF overlay, and quality dip markers for quickly
 finding problem areas.
@@ -57,26 +57,26 @@ Using the sunflower test clip (high spatial complexity, reveals artifacts well):
 ./scripts/download-assets.sh --clip sunflower
 
 # Step 1: Encode at a target quality (CRF 38 to see visible artifacts)
-veo encode assets/hd/sunflower_1080p25.y4m \
+viser encode assets/hd/sunflower_1080p25.y4m \
   -o sunflower_encoded.mp4 \
   --codec libx264 --crf 38 --preset veryfast \
   --width 1280 --height 720
 
 # Step 2: Create a browser-playable reference (Y4M won't play in browser)
-veo encode assets/hd/sunflower_1080p25.y4m \
+viser encode assets/hd/sunflower_1080p25.y4m \
   -o sunflower_reference.mp4 \
   --codec libx264 --crf 10 --preset veryfast \
   --width 1280 --height 720
 
 # Step 3: Measure per-frame VMAF and save to JSON
-veo quality measure \
+viser quality measure \
   --reference sunflower_reference.mp4 \
   --distorted sunflower_encoded.mp4 \
   --per-frame \
   -o sunflower_vmaf.json
 
 # Step 4: Launch the comparison player
-veo compare \
+viser compare \
   --reference sunflower_reference.mp4 \
   --encoded sunflower_encoded.mp4 \
   --vmaf-data sunflower_vmaf.json
@@ -90,20 +90,20 @@ and click dip markers to jump to the worst frames.
 
 ```bash
 # Run per-title analysis with final encodes
-veo per-title analyze -i movie.mp4 \
+viser per-title analyze -i movie.mp4 \
   --codecs libx264,libsvtav1 \
   --resolutions 480p,720p,1080p \
   --encode-output ./rungs/
 
 # Measure per-frame VMAF for a specific rung
-veo quality measure \
+viser quality measure \
   --reference movie.mp4 \
   --distorted ./rungs/rung3_720p_libsvtav1_1500kbps.mp4 \
   --per-frame \
   -o ./rungs/rung3_vmaf.json
 
 # Launch comparison player for that rung
-veo compare \
+viser compare \
   --reference movie.mp4 \
   --encoded ./rungs/rung3_720p_libsvtav1_1500kbps.mp4 \
   --vmaf-data ./rungs/rung3_vmaf.json
@@ -111,7 +111,7 @@ veo compare \
 
 ## Flags
 
-### `veo quality measure`
+### `viser quality measure`
 
 | Flag | Description |
 |------|-------------|
@@ -121,13 +121,13 @@ veo compare \
 | `-o / --output` | **Required for comparison player.** Saves per-frame results as JSON |
 | `--subsample` | Frame subsampling (default 0 = every frame when `--per-frame` is set) |
 
-### `veo compare`
+### `viser compare`
 
 | Flag | Description |
 |------|-------------|
 | `--reference` | Reference video file (must be browser-playable, e.g., MP4/H.264) |
 | `--encoded` | Encoded video file |
-| `--vmaf-data` | Per-frame VMAF JSON from `veo quality measure --per-frame -o` |
+| `--vmaf-data` | Per-frame VMAF JSON from `viser quality measure --per-frame -o` |
 | `--port` | HTTP port (default 8787) |
 
 **Note:** The reference video must be in a browser-playable format (MP4 with
@@ -135,7 +135,7 @@ H.264/H.265/AV1). If your source is Y4M or another raw format, first encode
 a high-quality reference:
 
 ```bash
-veo encode source.y4m -o reference.mp4 --codec libx264 --crf 10
+viser encode source.y4m -o reference.mp4 --codec libx264 --crf 10
 ```
 
 ## Player Features
@@ -186,4 +186,4 @@ If dips are unacceptable, consider:
 - Lowering CRF for that bitrate tier
 - Using a slower preset for better quality
 - Switching codecs (AV1 often handles problem content better than H.264)
-- Running segment-level CRF adaptation (`veo per-segment analyze`) to target a specific VMAF
+- Running segment-level CRF adaptation (`viser per-segment analyze`) to target a specific VMAF

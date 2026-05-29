@@ -1,8 +1,8 @@
-# VEO Documentation
+# viser Documentation
 
 ## Encoding Optimization
 
-These documents explain the principles, math, and science behind content-aware video encoding optimization - the core of what VEO does.
+These documents explain the principles, math, and science behind content-aware video encoding optimization - the core of what viser does.
 
 | Document | Description |
 |----------|-------------|

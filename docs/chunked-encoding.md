@@ -8,7 +8,7 @@ wall-clock encoding time.
 This document describes how chunked encoding works, how it integrates with
 per-shot optimization, and how it fits into a production transcoding workflow.
 
-**Status:** Documented for future implementation. Not yet built in VEO.
+**Status:** Documented for future implementation. Not yet built in viser.
 
 ## The Problem
 
@@ -175,12 +175,12 @@ chunk/shot boundaries.
 
 ## Production Transcoding Workflow
 
-A complete ingest-to-delivery pipeline using VEO with chunked encoding:
+A complete ingest-to-delivery pipeline using viser with chunked encoding:
 
 ```
 ┌─────────┐   ┌───────────┐   ┌─────────────┐   ┌─────────────┐
 │ Ingest  │──>│ Analyze   │──>│ Chunk &     │──>│ Encode      │
-│ source  │   │ (VEO)     │   │ Distribute  │   │ (workers)   │
+│ source  │   │ (viser)     │   │ Distribute  │   │ (workers)   │
 └─────────┘   └───────────┘   └─────────────┘   └──────┬──────┘
                                                         │
               ┌───────────┐   ┌─────────────┐           │
@@ -195,7 +195,7 @@ A complete ingest-to-delivery pipeline using VEO with chunked encoding:
 - Validate: probe format, resolution, frame rate, duration
 - Store in object storage (S3, GCS)
 
-### 2. Analyze (VEO)
+### 2. Analyze (viser)
 
 - Shot detection (scdet, ~real-time speed)
 - Per-shot trial encodes at representative CRF values
@@ -297,4 +297,4 @@ For SVT-AV1, per-frame QP can be controlled via a qpfile:
 - Netflix: [Optimized Shot-Based Encodes](https://netflixtechblog.com/optimized-shot-based-encodes-now-streaming-4b9464204830)
 - Netflix: [Rebuilding Video Processing Pipeline](https://netflixtechblog.com/rebuilding-netflix-video-processing-pipeline-with-microservices-4e5e6310e359)
 - Bitmovin: [Split and Stitch Encoding](https://bitmovin.com/blog/split-and-stitch-encoding/)
-- VEO Research: [Chunked Encoding Collation](../research/12-chunked-encoding-collation.md)
+- viser Research: [Chunked Encoding Collation](../research/12-chunked-encoding-collation.md)

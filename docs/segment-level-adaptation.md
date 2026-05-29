@@ -5,7 +5,7 @@ Segment-level CRF adaptation adjusts encoding quality on a **per-segment basis**
 content complexity, with closed-loop VMAF verification to maintain consistent
 perceptual quality across the video.
 
-This is VEO's third optimization method, building on per-title and per-shot.
+This is viser's third optimization method, building on per-title and per-shot.
 It is a practical approximation of true per-frame adaptation (like Beamr CABR)
 that works with standard encoders without requiring frame-level re-encoding.
 

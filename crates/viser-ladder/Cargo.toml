@@ -1,0 +1,19 @@
+[package]
+name = "viser-ladder"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bitrate ladder selection with crossover enforcement for viser"
+
+[lib]
+name = "viser_ladder"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.1.0" }
+viser-hull = { path = "../viser-hull", version = "0.1.0" }
+serde = { workspace = true }
