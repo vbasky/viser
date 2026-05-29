@@ -194,6 +194,7 @@ viser is designed for content-adaptive VOD encoding and explicitly does not addr
 | [Shot Detection](docs/shot-detection.md) | scdet, PySceneDetect, TransNetV2 |
 | [Chunked Encoding](docs/chunked-encoding.md) | Parallel encoding for production |
 | [Comparison Player](docs/comparison-player.md) | Side-by-side QA with VMAF timeline |
+| [Robustness Assessment](docs/robustness-assessment.md) | Project assessment: strengths, weaknesses, and feature gaps |
 
 ## License
 

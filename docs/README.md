@@ -14,6 +14,7 @@ These documents explain the principles, math, and science behind content-aware v
 | [Rate Control](rate-control.md) | CRF, fixed QP, 2-pass VBR, capped CRF - which mode to use and when |
 | [Shot Detection](shot-detection.md) | FFmpeg scdet, PySceneDetect, TransNetV2 - comparison and guidelines |
 | [Chunked Encoding](chunked-encoding.md) | Parallel encoding with shot-aware chunking for production workflows |
+| [Robustness Assessment](robustness-assessment.md) | Project assessment: strengths, weaknesses, and feature gaps vs. commercial tools |
 
 ## Reading Order
 
