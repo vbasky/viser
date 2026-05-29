@@ -1191,6 +1191,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "viser-ffmpeg",
  "viser-hull",
 ]
 
@@ -1262,6 +1263,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "viser-ffmpeg",
@@ -1363,6 +1365,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
+ "serde_json",
  "tokio",
  "viser-ffmpeg",
 ]
