@@ -61,8 +61,9 @@ check-all: fmt-check
     cargo test
     cargo doc --no-deps --document-private-items
 
-# Release a version end-to-end: bump → commit → tag → push → GitHub release → publish
-# Usage: just release 0.2.0   (tree must be clean, on master, gh authenticated)
+# Release a version: bump → commit → tag → push → CI builds binaries → cargo publish
+# CI (`.github/workflows/release.yml`) handles GitHub Release + binary builds.
+# Usage: just release 0.2.0   (tree must be clean, on master)
 release version:
     ./scripts/release.sh {{version}}
 

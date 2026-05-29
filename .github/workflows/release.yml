@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  push:
+    tags: [v*]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            ext: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            ext: tar.gz
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: zip
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup target add ${{ matrix.target }}
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+
+      - name: Build
+        run: cargo build --release -p viser-cli --target ${{ matrix.target }}
+
+      - name: Archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          archive="viser-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
+          tar czf "${archive}" viser
+          echo "archive=${archive}" >> "$GITHUB_ENV"
+
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          archive="viser-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          7z a "${archive}" viser.exe
+          echo "archive=${archive}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ env.archive }}
+
+  release:
+    name: Create GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*"
+          merge-multiple: true
+          path: /tmp/assets
+
+      - name: Checksums
+        working-directory: /tmp/assets
+        run: |
+          for f in *; do
+            [[ "$f" != *.sha256 ]] && shasum -a 256 "$f" > "$f.sha256"
+          done
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: viser ${{ github.ref_name }}
+          generate_release_notes: true
+          files: /tmp/assets/*
+          fail_on_unmatched_files: true
+
+  formula:
+    name: Homebrew formula
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch source tarball SHA
+        run: |
+          tag="${{ github.ref_name }}"
+          url="https://github.com/vbasky/viser/archive/refs/tags/${tag}.tar.gz"
+          sha=$(curl -sL "${url}" | shasum -a 256 | cut -d' ' -f1)
+
+          cat <<RUBY
+          class Viser < Formula
+            desc "Video Encoding Optimizer — per-content bitrate ladders from R-D analysis"
+            homepage "https://github.com/vbasky/viser"
+            url "https://github.com/vbasky/viser/archive/refs/tags/${tag}.tar.gz"
+            sha256 "${sha}"
+            license "MIT"
+
+            depends_on "rust" => :build
+            depends_on "fontconfig"
+
+            def install
+              system "cargo", "install",
+                *std_cargo_args(path: "crates/viser-cli")
+            end
+
+            test do
+              assert_match version.to_s,
+                shell_output("\#{bin}/viser --version")
+            end
+          end
+          RUBY

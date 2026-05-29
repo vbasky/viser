@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-set -euo pipefail
+#
+# Release viser to crates.io.
+#
+# Binary builds + GitHub Release happen automatically in CI
+# (.github/workflows/release.yml) when the tag is pushed.
+#
+# Usage: ./scripts/release.sh <version>
+# Prerequisites: on master, clean tree
 
-# viser release script: bump → commit → tag → push → GitHub release → publish
-# Usage: ./scripts/release.sh 0.2.0
-# Prerequisites: on master, clean tree, gh authenticated
+set -euo pipefail
 
 VERSION="${1:?Usage: $0 <version>}"
 CRATES=(
@@ -55,14 +60,10 @@ git add -A
 git commit -m "Release v$VERSION"
 git tag "v$VERSION"
 
-# Push
+# Push (triggers CI binary build + GitHub Release)
 git push origin master
 git push origin "v$VERSION"
-
-# Create GitHub release
-gh release create "v$VERSION" \
-    --title "viser v$VERSION" \
-    --generate-notes
+echo "==> tag pushed — CI is building binaries and creating the GitHub Release"
 
 # Publish to crates.io in dependency order
 for crate in "${CRATES[@]}"; do

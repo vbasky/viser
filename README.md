@@ -68,6 +68,24 @@ viser/
 └── rustfmt.toml
 ```
 
+## Installation
+
+```bash
+# Cargo (from source)
+cargo install viser-cli
+
+# Homebrew (once accepted into homebrew-core)
+brew install viser
+
+# Or build from source
+git clone https://github.com/vbasky/viser.git
+cd viser
+cargo build --release
+```
+
+Pre-built binaries for Linux, macOS (ARM + Intel), and Windows are available on
+the [releases page](https://github.com/vbasky/viser/releases).
+
 ## Quick Start
 
 ### Prerequisites
