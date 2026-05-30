@@ -1,7 +1,35 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::time::Duration;
 use tokio::process::Command;
 use viser_ffmpeg::{ffmpeg_path, probe};
+
+/// Classified scene type based on spatial/temporal complexity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SceneClass {
+    /// Black / fade / freeze frame (near-zero motion and detail)
+    Black,
+    /// Static / talking-heads (low spatial, low temporal)
+    Static,
+    /// Detailed / landscape (high spatial, low temporal)
+    Detailed,
+    /// Motion / action (low spatial, high temporal)
+    Motion,
+    /// Complex / crowd / nature (high spatial, high temporal)
+    Complex,
+}
+
+impl fmt::Display for SceneClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SceneClass::Black => write!(f, "black"),
+            SceneClass::Static => write!(f, "static"),
+            SceneClass::Detailed => write!(f, "detailed"),
+            SceneClass::Motion => write!(f, "motion"),
+            SceneClass::Complex => write!(f, "complex"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrameComplexity {
@@ -21,6 +49,7 @@ pub struct SegmentComplexity {
     pub max_spatial: f64,
     pub max_temporal: f64,
     pub score: f64, // combined 0-100 complexity score
+    pub scene_class: SceneClass,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,6 +204,8 @@ fn aggregate_segments(
             let avg_s = mean(&spatial);
             let avg_t = mean(&temporal);
 
+            let scene_class = classify_scene(avg_s, avg_t, avg_dct);
+
             segments.push(SegmentComplexity {
                 start: seg_start,
                 end: seg_end,
@@ -184,6 +215,7 @@ fn aggregate_segments(
                 max_spatial: max_val(&spatial),
                 max_temporal: max_val(&temporal),
                 score: compute_score_with_dct(avg_s, avg_t, avg_dct),
+                scene_class,
             });
         }
 
@@ -204,6 +236,36 @@ fn compute_score_with_dct(spatial: f64, temporal: f64, dct_energy: f64) -> f64 {
     let temporal_norm = (temporal * 3.33).min(100.0);
     let dct_norm = (dct_energy * 0.5).min(100.0);
     spatial_norm * 0.4 + dct_norm * 0.3 + temporal_norm * 0.3
+}
+
+/// Classify a segment by its spatial/temporal complexity profile.
+pub fn classify_scene(spatial: f64, temporal: f64, dct_energy: f64) -> SceneClass {
+    let s = spatial;
+    let t = temporal;
+    let d = dct_energy;
+
+    // Black / fade: near-zero motion, entropy, and detail
+    if t < 1.0 && s <= 0.3 && d < 5.0 {
+        return SceneClass::Black;
+    }
+
+    // Motion / action: high inter-frame difference, moderate detail
+    if t > 8.0 && s < 0.65 {
+        return SceneClass::Motion;
+    }
+
+    // Complex / crowd / nature: high texture + high motion
+    if s > 0.7 && t > 5.0 {
+        return SceneClass::Complex;
+    }
+
+    // Detailed / landscape: high entropy, low motion
+    if s >= 0.65 && t <= 5.0 {
+        return SceneClass::Detailed;
+    }
+
+    // Static / talking-heads: low motion, moderate entropy
+    SceneClass::Static
 }
 
 fn mean(vals: &[f64]) -> f64 {
@@ -378,6 +440,58 @@ lavfi.signalstats.YLOW=50.0
     }
 
     #[test]
+    fn test_classify_black() {
+        assert_eq!(classify_scene(0.2, 0.5, 2.0), SceneClass::Black);
+    }
+
+    #[test]
+    fn test_classify_static() {
+        assert_eq!(classify_scene(0.4, 1.5, 10.0), SceneClass::Static);
+    }
+
+    #[test]
+    fn test_classify_detailed() {
+        assert_eq!(classify_scene(0.7, 3.0, 50.0), SceneClass::Detailed);
+    }
+
+    #[test]
+    fn test_classify_motion() {
+        assert_eq!(classify_scene(0.4, 10.0, 30.0), SceneClass::Motion);
+    }
+
+    #[test]
+    fn test_classify_complex() {
+        assert_eq!(classify_scene(0.8, 6.0, 60.0), SceneClass::Complex);
+    }
+
+    #[test]
+    fn test_classify_edges() {
+        // Boundary conditions
+        assert_eq!(classify_scene(0.65, 5.0, 30.0), SceneClass::Detailed);
+        assert_eq!(classify_scene(0.6, 9.0, 20.0), SceneClass::Motion);
+    }
+
+    #[test]
+    fn test_scene_class_display() {
+        assert_eq!(SceneClass::Black.to_string(), "black");
+        assert_eq!(SceneClass::Static.to_string(), "static");
+        assert_eq!(SceneClass::Detailed.to_string(), "detailed");
+        assert_eq!(SceneClass::Motion.to_string(), "motion");
+        assert_eq!(SceneClass::Complex.to_string(), "complex");
+    }
+
+    #[test]
+    fn test_segment_has_scene_class() {
+        let frames = vec![FrameComplexity {
+            pts: Duration::from_secs_f64(0.0),
+            spatial: 0.2,
+            temporal: 0.5,
+            dct_energy: 2.0,
+        }];
+        let segs = aggregate_segments(&frames, Duration::from_secs(2), Duration::from_secs(2));
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].scene_class, SceneClass::Black);
+    }
     fn test_analyze_opts_default() {
         let opts = AnalyzeOpts::default();
         assert_eq!(opts.segment_duration, Duration::from_secs(2));
