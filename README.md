@@ -6,7 +6,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/viser-cli?logo=rust&color=orange)](https://crates.io/crates/viser-cli)
 [![docs.rs](https://img.shields.io/docsrs/viser-cli?logo=docsdotrs)](https://docs.rs/viser-cli)
-[![CI](https://img.shields.io/github/actions/workflow/status/vbasky/viser/ci.yml?branch=master&logo=github&label=CI)](https://github.com/vbasky/viser/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/vbasky/viser/ci.yml?branch=main&logo=github&label=CI)](https://github.com/vbasky/viser/actions)
 [![License](https://img.shields.io/github/license/vbasky/viser)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-blue)](https://www.rust-lang.org)
 
