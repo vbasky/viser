@@ -111,6 +111,19 @@ enum InspectCommands {
         /// Video file to inspect
         file: String,
     },
+    /// Detect black frames in a video file
+    BlackFrames {
+        /// Video file to inspect
+        file: String,
+        /// Minimum duration of black to detect in seconds (default: 2.0)
+        #[arg(long, default_value = "2.0")]
+        duration: f64,
+    },
+    /// Measure EBU R128 loudness (integrated, short-term, true peak)
+    Loudness {
+        /// Audio or video file to measure
+        file: String,
+    },
 }
 
 // ── Quality ──
@@ -412,6 +425,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::Encode(args) => cmd_encode(args).await,
         Commands::Inspect { command } => match command {
             InspectCommands::Probe { file } => cmd_inspect_probe(&file).await,
+            InspectCommands::BlackFrames { file, duration } => {
+                cmd_inspect_blackframes(&file, duration).await
+            }
+            InspectCommands::Loudness { file } => cmd_inspect_loudness(&file).await,
         },
         Commands::Quality { command } => match command {
             QualityCommands::Measure(args) => cmd_quality_measure(args).await,
@@ -1326,4 +1343,69 @@ mod tests {
             viser_ffmpeg::RateControlMode::CappedCrf
         );
     }
+}
+
+async fn cmd_inspect_blackframes(file: &str, min_duration: f64) -> anyhow::Result<()> {
+    let filter = format!("blackdetect=d={}:pic_th=0.98", min_duration);
+    let output = tokio::process::Command::new(viser_ffmpeg::ffmpeg_path())
+        .args(["-i", file, "-vf", &filter, "-f", "null", "-"])
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("blackdetect failed: {stderr}");
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut found = false;
+
+    for line in stderr.lines() {
+        let line = line.trim();
+        if line.contains("black_start:")
+            || line.contains("black_end:")
+            || line.contains("black_duration:")
+        {
+            if !found {
+                println!("Black frame intervals:");
+                found = true;
+            }
+            println!("  {line}");
+        }
+    }
+
+    if !found {
+        println!("No black frames detected (min duration: {min_duration}s).");
+    }
+
+    Ok(())
+}
+
+async fn cmd_inspect_loudness(file: &str) -> anyhow::Result<()> {
+    let output = tokio::process::Command::new(viser_ffmpeg::ffmpeg_path())
+        .args(["-i", file, "-af", "ebur128", "-f", "null", "-"])
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("EBU R128 loudness measurement failed: {stderr}");
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    println!("EBU R128 Loudness Report");
+    println!("{}", "-".repeat(30));
+    for line in stderr.lines() {
+        let line = line.trim();
+        if line.starts_with("I:") || line.starts_with("LRA:") || line.starts_with("L") {
+            println!("  {line}");
+        }
+    }
+
+    Ok(())
 }
