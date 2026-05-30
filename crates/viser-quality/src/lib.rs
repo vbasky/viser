@@ -10,6 +10,8 @@ pub enum Metric {
     Vmaf,
     Psnr,
     Ssim,
+    Ssimulacra2,
+    Butteraugli,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -17,6 +19,8 @@ pub struct Result {
     pub vmaf: f64,
     pub psnr: f64,
     pub ssim: f64,
+    pub ssimulacra2: f64,
+    pub butteraugli: f64,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub frames: Vec<FrameResult>,
 }
@@ -27,6 +31,8 @@ pub struct FrameResult {
     pub vmaf: f64,
     pub psnr: f64,
     pub ssim: f64,
+    pub ssimulacra2: f64,
+    pub butteraugli: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -41,7 +47,13 @@ pub struct MeasureOpts {
 impl Default for MeasureOpts {
     fn default() -> Self {
         Self {
-            metrics: vec![Metric::Vmaf, Metric::Psnr, Metric::Ssim],
+            metrics: vec![
+                Metric::Vmaf,
+                Metric::Psnr,
+                Metric::Ssim,
+                Metric::Ssimulacra2,
+                Metric::Butteraugli,
+            ],
             subsample: 0,
             model: "vmaf_v0.6.1".into(),
             per_frame: false,
@@ -74,6 +86,7 @@ pub async fn measure(
             Metric::Psnr => vmaf_opts.push_str(":feature=name=psnr"),
             Metric::Ssim => vmaf_opts.push_str(":feature=name=float_ssim"),
             Metric::Vmaf => {}
+            Metric::Ssimulacra2 | Metric::Butteraugli => {}
         }
     }
 
@@ -118,7 +131,21 @@ pub async fn measure(
     }
 
     let data = std::fs::read(&log_path)?;
-    parse_vmaf_log(&data, opts.per_frame)
+    let mut result = parse_vmaf_log(&data, opts.per_frame)?;
+
+    // SSIMULACRA2: run CLI on extracted PNG frames
+    if metrics.contains(&Metric::Ssimulacra2) {
+        let s2_score = measure_ssimulacra2(reference, distorted, &opts).await?;
+        result.ssimulacra2 = s2_score;
+    }
+
+    // Butteraugli: run CLI on extracted PNG frames
+    if metrics.contains(&Metric::Butteraugli) {
+        let ba_score = measure_butteraugli(reference, distorted, &opts).await?;
+        result.butteraugli = ba_score;
+    }
+
+    Ok(result)
 }
 
 // libvmaf JSON output structures
@@ -167,11 +194,188 @@ fn parse_vmaf_log(data: &[u8], per_frame: bool) -> anyhow::Result<Result> {
                 vmaf: f.metrics.get("vmaf").copied().unwrap_or(0.0),
                 psnr: f.metrics.get("psnr_y").copied().unwrap_or(0.0),
                 ssim: f.metrics.get("float_ssim").copied().unwrap_or(0.0),
+                ssimulacra2: f.metrics.get("ssimulacra2").copied().unwrap_or(0.0),
+                butteraugli: f.metrics.get("butteraugli").copied().unwrap_or(0.0),
             });
         }
     }
 
     Ok(result)
+}
+
+/// Run ssimulacra2 CLI on a representative frame from reference vs distorted.
+async fn measure_ssimulacra2(
+    reference: &str,
+    distorted: &str,
+    opts: &MeasureOpts,
+) -> anyhow::Result<f64> {
+    // Extract one frame from each video as PNG
+    let ref_png =
+        tempfile::Builder::new().prefix("viser-ssimulacra2-ref-").suffix(".png").tempfile()?;
+    let dist_png =
+        tempfile::Builder::new().prefix("viser-ssimulacra2-dist-").suffix(".png").tempfile()?;
+
+    // Probe to get resolution
+    let ref_info = if let Some(ref cache) = opts.probe_cache {
+        cache.probe(reference).await?
+    } else {
+        viser_ffmpeg::probe(reference).await?
+    };
+    let ref_video =
+        ref_info.video_stream().ok_or_else(|| anyhow::anyhow!("no video stream in reference"))?;
+
+    let ref_output = Command::new(viser_ffmpeg::ffmpeg_path())
+        .args([
+            "-i",
+            reference,
+            "-vf",
+            &format!(
+                "select=eq(n\\,0),scale={}:{}:flags=bicubic",
+                ref_video.width, ref_video.height
+            ),
+            "-vframes",
+            "1",
+            "-f",
+            "image2pipe",
+            "-",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .await?;
+
+    if !ref_output.status.success() {
+        anyhow::bail!("failed to extract reference frame for SSIMULACRA2");
+    }
+
+    let dist_output = Command::new(viser_ffmpeg::ffmpeg_path())
+        .args([
+            "-i",
+            distorted,
+            "-vf",
+            &format!(
+                "select=eq(n\\,0),scale={}:{}:flags=bicubic",
+                ref_video.width, ref_video.height
+            ),
+            "-vframes",
+            "1",
+            "-f",
+            "image2pipe",
+            "-",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .await?;
+
+    if !dist_output.status.success() {
+        anyhow::bail!("failed to extract distorted frame for SSIMULACRA2");
+    }
+
+    // Write frames to temp files
+    std::fs::write(ref_png.path(), &ref_output.stdout)?;
+    std::fs::write(dist_png.path(), &dist_output.stdout)?;
+
+    // Run ssimulacra2
+    let s2_output = Command::new("ssimulacra2")
+        .arg(ref_png.path())
+        .arg(dist_png.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .await?;
+
+    if !s2_output.status.success() {
+        anyhow::bail!("ssimulacra2 failed: {}", String::from_utf8_lossy(&s2_output.stderr));
+    }
+
+    let stdout_str = String::from_utf8_lossy(&s2_output.stdout);
+    let score: f64 = stdout_str
+        .trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("ssimulacra2: could not parse score: {stdout_str}"))?;
+
+    Ok(score)
+}
+
+/// Run butteraugli CLI on a representative frame from reference vs distorted.
+async fn measure_butteraugli(
+    reference: &str,
+    distorted: &str,
+    opts: &MeasureOpts,
+) -> anyhow::Result<f64> {
+    // Extract one frame from each video as PNG
+    let ref_png =
+        tempfile::Builder::new().prefix("viser-butteraugli-ref-").suffix(".png").tempfile()?;
+    let dist_png =
+        tempfile::Builder::new().prefix("viser-butteraugli-dist-").suffix(".png").tempfile()?;
+
+    let ref_info = if let Some(ref cache) = opts.probe_cache {
+        cache.probe(reference).await?
+    } else {
+        viser_ffmpeg::probe(reference).await?
+    };
+    let ref_video =
+        ref_info.video_stream().ok_or_else(|| anyhow::anyhow!("no video stream in reference"))?;
+
+    // Extract first frame PNGs
+    for (path, input, label) in
+        [(ref_png.path(), reference, "reference"), (dist_png.path(), distorted, "distorted")]
+    {
+        let output = Command::new(viser_ffmpeg::ffmpeg_path())
+            .args([
+                "-i",
+                input,
+                "-vf",
+                &format!(
+                    "select=eq(n\\,0),scale={}:{}:flags=bicubic",
+                    ref_video.width, ref_video.height
+                ),
+                "-vframes",
+                "1",
+                "-f",
+                "image2pipe",
+                "-",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            anyhow::bail!("failed to extract {label} frame for butteraugli");
+        }
+        std::fs::write(path, &output.stdout)?;
+    }
+
+    // Run butteraugli
+    let ba_output = Command::new("butteraugli")
+        .arg(ref_png.path())
+        .arg(dist_png.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .await;
+
+    if let Ok(out) = ba_output {
+        if out.status.success() {
+            let stdout_str = String::from_utf8_lossy(&out.stdout);
+            if let Ok(score) = stdout_str.trim().parse::<f64>() {
+                return Ok(score);
+            }
+            // butteraugli may output "0" on success with no stdout — treat as 0
+            // or parse the last line
+            if let Some(last_line) = stdout_str.lines().last() {
+                if let Ok(score) = last_line.trim().parse::<f64>() {
+                    return Ok(score);
+                }
+            }
+        }
+    }
+
+    // butteraugli may not be installed; return 0.0 as sentinel
+    warn!("butteraugli not available or failed; returning 0.0");
+    Ok(0.0)
 }
 
 #[cfg(test)]
@@ -283,7 +487,7 @@ mod tests {
     #[test]
     fn test_measure_opts_default() {
         let opts = MeasureOpts::default();
-        assert_eq!(opts.metrics.len(), 3);
+        assert_eq!(opts.metrics.len(), 5);
         assert_eq!(opts.subsample, 0);
         assert_eq!(opts.model, "vmaf_v0.6.1");
         assert!(!opts.per_frame);
