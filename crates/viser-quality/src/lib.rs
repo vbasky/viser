@@ -15,6 +15,7 @@ pub enum Metric {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Result {
     pub vmaf: f64,
     pub psnr: f64,
@@ -384,7 +385,9 @@ mod tests {
 
     #[test]
     fn test_metric_serde_roundtrip() {
-        for m in &[Metric::Vmaf, Metric::Psnr, Metric::Ssim] {
+        for m in
+            &[Metric::Vmaf, Metric::Psnr, Metric::Ssim, Metric::Ssimulacra2, Metric::Butteraugli]
+        {
             let json = serde_json::to_string(m).unwrap();
             let back: Metric = serde_json::from_str(&json).unwrap();
             assert_eq!(*m, back);
@@ -396,12 +399,16 @@ mod tests {
         assert_eq!(serde_json::to_string(&Metric::Vmaf).unwrap(), "\"vmaf\"");
         assert_eq!(serde_json::to_string(&Metric::Psnr).unwrap(), "\"psnr\"");
         assert_eq!(serde_json::to_string(&Metric::Ssim).unwrap(), "\"ssim\"");
+        assert_eq!(serde_json::to_string(&Metric::Ssimulacra2).unwrap(), "\"ssimulacra2\"");
+        assert_eq!(serde_json::to_string(&Metric::Butteraugli).unwrap(), "\"butteraugli\"");
     }
 
     #[test]
     fn test_metric_eq() {
         assert_eq!(Metric::Vmaf, Metric::Vmaf);
         assert_ne!(Metric::Vmaf, Metric::Psnr);
+        assert_eq!(Metric::Ssimulacra2, Metric::Ssimulacra2);
+        assert_ne!(Metric::Ssimulacra2, Metric::Butteraugli);
     }
 
     #[test]
@@ -410,6 +417,8 @@ mod tests {
         assert!((r.vmaf - 0.0).abs() < 1e-9);
         assert!((r.psnr - 0.0).abs() < 1e-9);
         assert!((r.ssim - 0.0).abs() < 1e-9);
+        assert!((r.ssimulacra2 - 0.0).abs() < 1e-9);
+        assert!((r.butteraugli - 0.0).abs() < 1e-9);
         assert!(r.frames.is_empty());
     }
 
@@ -482,6 +491,30 @@ mod tests {
     #[test]
     fn test_parse_vmaf_log_invalid_json() {
         assert!(parse_vmaf_log(b"not json", false).is_err());
+    }
+
+    #[test]
+    fn test_result_serde_roundtrip() {
+        let r = Result {
+            vmaf: 85.0,
+            psnr: 38.5,
+            ssim: 0.95,
+            ssimulacra2: 70.0,
+            butteraugli: 0.5,
+            frames: vec![],
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: Result = serde_json::from_str(&json).unwrap();
+        assert!((back.vmaf - 85.0).abs() < 1e-9);
+        assert!((back.ssimulacra2 - 70.0).abs() < 1e-9);
+        assert!((back.butteraugli - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_result_serde_omits_zero_frames() {
+        let r = Result::default();
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains("frames"));
     }
 
     #[test]
