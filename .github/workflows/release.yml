@@ -177,21 +177,26 @@ jobs:
           done
 
   formula:
-    name: Homebrew formula
+    name: Homebrew formula PR
     needs: [publish-crates]
+    if: github.repository == 'vbasky/viser'
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch source tarball SHA
+      - uses: actions/checkout@v5
+
+      - name: Generate formula
+        id: formula
         run: |
           tag="${{ github.ref_name }}"
           url="https://github.com/vbasky/viser/archive/refs/tags/${tag}.tar.gz"
           sha=$(curl -sL "${url}" | shasum -a 256 | cut -d' ' -f1)
+          version="${tag#v}"
 
-          cat <<RUBY
+          cat <<RUBY > /tmp/viser.rb
           class Viser < Formula
             desc "Video Encoding Optimizer — per-content bitrate ladders from R-D analysis"
             homepage "https://github.com/vbasky/viser"
-            url "https://github.com/vbasky/viser/archive/refs/tags/${tag}.tar.gz"
+            url "${url}"
             sha256 "${sha}"
             license "MIT"
 
@@ -209,3 +214,33 @@ jobs:
             end
           end
           RUBY
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Create PR to homebrew-core
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_CORE_TOKEN }}
+        run: |
+          VERSION="${{ steps.formula.outputs.version }}"
+          BRANCH="viser-${VERSION}"
+
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/vbasky/homebrew-core.git" /tmp/homebrew-core
+          cd /tmp/homebrew-core
+          git remote add upstream https://github.com/Homebrew/homebrew-core.git
+          git fetch upstream main
+          git checkout -b "${BRANCH}" upstream/main
+
+          mkdir -p Formula/v
+          cp /tmp/viser.rb Formula/v/viser.rb
+          git add Formula/v/viser.rb
+          git -c user.name="viser-bot" \
+             -c user.email="bot@viser.app" \
+             commit -m "viser ${VERSION}"
+
+          git push origin "${BRANCH}" 2>&1
+
+          gh pr create \
+            --repo Homebrew/homebrew-core \
+            --head "vbasky:${BRANCH}" \
+            --base main \
+            --title "viser ${VERSION}" \
+            --body "Update viser to ${VERSION}."
