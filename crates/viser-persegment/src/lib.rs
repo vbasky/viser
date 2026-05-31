@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use viser_complexity::{self, AnalyzeOpts, Profile};
 use viser_ffmpeg::{self, Codec, EncodeJob, Resolution};
@@ -85,70 +86,105 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
     // Step 3: Temp directory
     let tmp_dir = tempfile::Builder::new().prefix("viser-persegment-").tempdir()?;
 
-    // Step 4: Encode and verify each segment (closed loop with binary search)
-    for (i, seg) in segments.iter_mut().enumerate() {
-        let mut crf_low = cfg.min_crf;
-        let mut crf_high = cfg.max_crf;
+    // Step 4: Encode and verify each segment in parallel
+    let parallel = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(parallel));
+    let source = Arc::new(source.to_string());
 
-        for iter in 0..cfg.max_iterations {
-            seg.iterations = iter + 1;
+    let mut handles = Vec::new();
+    for (i, seg) in segments.iter().enumerate() {
+        let sem = semaphore.clone();
+        let source = source.clone();
+        let seg = seg.clone();
+        let cfg_shared = Config {
+            min_crf: cfg.min_crf,
+            max_crf: cfg.max_crf,
+            codec: cfg.codec,
+            preset: cfg.preset.clone(),
+            resolution: cfg.resolution,
+            target_vmaf: cfg.target_vmaf,
+            tolerance: cfg.tolerance,
+            max_iterations: cfg.max_iterations,
+            segment_duration: Duration::from_secs(0),
+        };
+        let tmp_dir_path = tmp_dir.path().to_path_buf();
 
-            let seg_source = tmp_dir.path().join(format!("seg_{i:03}_src.mkv"));
-            let seg_encoded = tmp_dir.path().join(format!("seg_{i:03}_crf{}.mp4", seg.crf));
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await.unwrap();
 
-            let dur_secs = (seg.end - seg.start).as_secs_f64();
-            viser_ffmpeg::extract(
-                source,
-                &seg_source.to_string_lossy(),
-                seg.start.as_secs_f64(),
-                dur_secs,
-            )
-            .await?;
+            let mut crf_low = cfg_shared.min_crf;
+            let mut crf_high = cfg_shared.max_crf;
+            let mut seg = seg;
 
-            let job = EncodeJob {
-                input: seg_source.to_string_lossy().to_string(),
-                output: seg_encoded.to_string_lossy().to_string(),
-                codec: cfg.codec,
-                crf: seg.crf,
-                preset: cfg.preset.clone(),
-                resolution: cfg.resolution,
-                rate_control: viser_ffmpeg::RateControlMode::Crf,
-                target_bitrate: 0.0,
-                max_bitrate: 0.0,
-                bufsize: 0.0,
-                extra_args: vec![],
-            };
+            for iter in 0..cfg_shared.max_iterations {
+                seg.iterations = iter + 1;
 
-            let enc_result = viser_ffmpeg::encode(job, None).await?;
-            seg.bitrate = enc_result.bitrate;
+                let seg_source = tmp_dir_path.join(format!("seg_{i:03}_src.mkv"));
+                let seg_encoded = tmp_dir_path.join(format!("seg_{i:03}_crf{}.mp4", seg.crf));
 
-            let q_result = viser_quality::measure(
-                &seg_source.to_string_lossy(),
-                &seg_encoded.to_string_lossy(),
-                MeasureOpts { metrics: vec![Metric::Vmaf], subsample: 5, ..Default::default() },
-            )
-            .await?;
-            seg.vmaf = q_result.vmaf;
+                let dur_secs = (seg.end - seg.start).as_secs_f64();
+                viser_ffmpeg::extract(
+                    &source,
+                    &seg_source.to_string_lossy(),
+                    seg.start.as_secs_f64(),
+                    dur_secs,
+                )
+                .await?;
 
-            let _ = std::fs::remove_file(&seg_encoded);
-            let _ = std::fs::remove_file(&seg_source);
+                let job = EncodeJob {
+                    input: seg_source.to_string_lossy().to_string(),
+                    output: seg_encoded.to_string_lossy().to_string(),
+                    codec: cfg_shared.codec,
+                    crf: seg.crf,
+                    preset: cfg_shared.preset.clone(),
+                    resolution: cfg_shared.resolution,
+                    rate_control: viser_ffmpeg::RateControlMode::Crf,
+                    target_bitrate: 0.0,
+                    max_bitrate: 0.0,
+                    bufsize: 0.0,
+                    extra_args: vec![],
+                };
 
-            if (seg.vmaf - cfg.target_vmaf).abs() <= cfg.tolerance {
-                break;
+                let enc_result = viser_ffmpeg::encode(job, None).await?;
+                seg.bitrate = enc_result.bitrate;
+
+                let q_result = viser_quality::measure(
+                    &seg_source.to_string_lossy(),
+                    &seg_encoded.to_string_lossy(),
+                    MeasureOpts { metrics: vec![Metric::Vmaf], subsample: 5, ..Default::default() },
+                )
+                .await?;
+                seg.vmaf = q_result.vmaf;
+
+                let _ = std::fs::remove_file(&seg_encoded);
+                let _ = std::fs::remove_file(&seg_source);
+
+                if (seg.vmaf - cfg_shared.target_vmaf).abs() <= cfg_shared.tolerance {
+                    break;
+                }
+
+                if seg.vmaf > cfg_shared.target_vmaf + cfg_shared.tolerance {
+                    crf_low = seg.crf;
+                } else {
+                    crf_high = seg.crf;
+                }
+                seg.crf = (crf_low + crf_high) / 2;
+
+                if crf_high - crf_low <= 1 {
+                    break;
+                }
             }
 
-            if seg.vmaf > cfg.target_vmaf + cfg.tolerance {
-                crf_low = seg.crf;
-            } else {
-                crf_high = seg.crf;
-            }
-            seg.crf = (crf_low + crf_high) / 2;
-
-            if crf_high - crf_low <= 1 {
-                break;
-            }
-        }
+            Ok::<_, anyhow::Error>((i, seg))
+        }));
     }
+
+    let mut seg_results: Vec<Option<SegmentResult>> = vec![None; segments.len()];
+    for h in handles {
+        let (i, seg) = h.await??;
+        seg_results[i] = Some(seg);
+    }
+    let segments: Vec<SegmentResult> = seg_results.into_iter().flatten().collect();
 
     // Compute averages
     let mut total_bitrate = 0.0;

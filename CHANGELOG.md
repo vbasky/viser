@@ -1,4 +1,40 @@
 # Changelog
+## [0.4.0] - 2026-05-31
+
+### Added
+
+- **Revelo probe engine** — optional pure-Rust metadata extraction replaces ffprobe.
+  Enable with `--features revelo` at build time, then use `viser inspect probe --probe-engine revelo`.
+  Supports the full ProbeResult contract: codec names, HDR transfer/primaries, pixel format,
+  frame rate, duration, bitrate, audio channels. ProbeCache can dispatch to either engine.
+- **Audio bitrate-aware ladder budgets** — per-title analysis now extracts audio bitrate
+  from the source and reserves it in the delivery budget. LadderOpts gains audio_bitrate_kbps,
+  Result includes it in saved analysis JSON.
+- **Screen content detection** — viser-complexity classifies video as natural or screen
+  content (slides, code, UI) from spatial/temporal/DCT heuristics. Four confidence levels
+  with detailed reason strings.
+- **SSIMULACRA2 and butteraugli quality metrics** — viser-quality now supports five
+  perceptual metrics alongside VMAF/PSNR/SSIM. Missing binaries degrade gracefully.
+- **Parallel per-shot and per-segment analysis** — both pipelines now use tokio
+  spawn + semaphore fan-out instead of sequential for-loops. Per-shot extracts all segments
+  first then analyzes in parallel; per-segment runs independent CRF binary search per segment
+  concurrently.
+- **Comprehensive algorithm test suite** — 170+ tests covering convex hull, BD-rate,
+  Trellis optimization, ladder selection, screen content detection, and revelo probe mapping.
+
+### Changed
+
+- **MSRV raised to 1.88** — required by revelo-core use of let-chains.
+- LadderOpts gains audio_bitrate_kbps field (default 0.0, backwards-compatible via serde default).
+- ProbeCache takes a ProbeEngine parameter; ProbeCache::new() defaults to ffprobe,
+  ProbeCache::with_revelo() uses the revelo engine (feature-gated).
+- README updated with per-analysis-type command examples, test suite commands, and build flags.
+
+### Fixed
+
+- Release workflow awk bracket-escaping and v prefix stripping fixed so release notes
+  actually populate from CHANGELOG.md.
+
 ## [0.3.0] - 2026-05-31
 
 ### Added

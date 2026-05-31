@@ -22,11 +22,12 @@ pub struct Ladder {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Opts {
-    pub num_rungs: i32,   // target number of rungs (e.g., 6)
-    pub min_bitrate: f64, // minimum bitrate in kbps
-    pub max_bitrate: f64, // maximum bitrate in kbps
-    pub min_vmaf: f64,    // minimum acceptable quality
-    pub max_vmaf: f64,    // maximum quality target
+    pub num_rungs: i32,          // target number of rungs (e.g., 6)
+    pub min_bitrate: f64,        // minimum bitrate in kbps
+    pub max_bitrate: f64,        // maximum bitrate in kbps
+    pub min_vmaf: f64,           // minimum acceptable quality
+    pub max_vmaf: f64,           // maximum quality target
+    pub audio_bitrate_kbps: f64, // audio overhead in delivery budget
 }
 
 impl Default for Opts {
@@ -37,6 +38,7 @@ impl Default for Opts {
             max_bitrate: 8000.0,
             min_vmaf: 40.0,
             max_vmaf: 97.0,
+            audio_bitrate_kbps: 0.0,
         }
     }
 }
@@ -53,7 +55,7 @@ pub fn select(h: &Hull, opts: &Opts) -> Ladder {
     // Filter hull points by constraints + crossover enforcement
     let mut candidates: Vec<Point> = Vec::new();
     for p in &h.points {
-        if p.bitrate < opts.min_bitrate || p.bitrate > opts.max_bitrate {
+        if p.bitrate < opts.min_bitrate || p.bitrate > opts.max_bitrate - opts.audio_bitrate_kbps {
             continue;
         }
         if p.vmaf < opts.min_vmaf {

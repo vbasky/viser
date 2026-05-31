@@ -3,6 +3,7 @@ mod trellis;
 pub use trellis::*;
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use viser_encoding::ProgressSender;
 use viser_ffmpeg::{Codec, Resolution, extract};
@@ -76,16 +77,23 @@ pub async fn analyze(
     // Step 2: Create temp directory
     let tmp_dir = tempfile::Builder::new().prefix("viser-pershot-").tempdir()?;
 
-    // Step 3: Analyze each shot
-    let mut shot_results = Vec::new();
-    let mut total_trials = 0;
+    // Step 3: Extract shot segments, then analyze in parallel
+    let parallel = cfg.encoding.effective_parallel().min(shots.len());
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(parallel));
+    let source = Arc::new(source.to_string());
+    let sender = Arc::new(sender);
 
+    let mut segment_paths = Vec::new();
     for (i, s) in shots.iter().enumerate() {
         let seg_path = tmp_dir.path().join(format!("shot_{i:03}.mkv"));
         let seg_str = seg_path.to_string_lossy().to_string();
+        extract(&source, &seg_str, s.start.as_secs_f64(), s.duration.as_secs_f64()).await?;
+        segment_paths.push((i, seg_path, seg_str, s.clone()));
+    }
 
-        extract(source, &seg_str, s.start.as_secs_f64(), s.duration.as_secs_f64()).await?;
-
+    let mut handles = Vec::new();
+    for (i, seg_path, seg_str, s) in segment_paths {
+        let sem = semaphore.clone();
         let shot_cfg = viser_pertitle::Config {
             encoding: cfg.encoding.clone(),
             ladder_opts: cfg.ladder_opts.clone(),
@@ -93,20 +101,30 @@ pub async fn analyze(
             vmaf_model: String::new(),
             allow_hdr: false,
         };
+        let sender = sender.clone();
+        let shots_len = shots.len();
 
-        let shot_analysis = viser_pertitle::analyze(&seg_str, shot_cfg, None).await?;
-
-        shot_results.push(ShotResult {
-            shot: s.clone(),
-            points: shot_analysis.points,
-            hull: shot_analysis.hull,
-        });
-        total_trials += shot_analysis.trial_count;
-
-        let _ = std::fs::remove_file(&seg_path);
-
-        sender.send(Progress { shot_done: i + 1, shot_total: shots.len(), shot_index: i });
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await.unwrap();
+            let shot_analysis = viser_pertitle::analyze(&seg_str, shot_cfg, None).await?;
+            let _ = std::fs::remove_file(&seg_path);
+            sender.send(Progress { shot_done: i + 1, shot_total: shots_len, shot_index: i });
+            Ok::<_, anyhow::Error>((
+                i,
+                ShotResult { shot: s, points: shot_analysis.points, hull: shot_analysis.hull },
+                shot_analysis.trial_count,
+            ))
+        }));
     }
+
+    let mut shot_results: Vec<Option<ShotResult>> = vec![None; shots.len()];
+    let mut total_trials = 0;
+    for h in handles {
+        let (i, result, trials) = h.await??;
+        shot_results[i] = Some(result);
+        total_trials += trials;
+    }
+    let shot_results: Vec<ShotResult> = shot_results.into_iter().flatten().collect();
 
     Ok(Result {
         source: source.to_string(),

@@ -1,6 +1,6 @@
 [package]
 name = "viser-ffmpeg"
-version = "0.3.0"
+version = "0.4.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -23,3 +23,11 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+
+[features]
+revelo = ["dep:revelo"]
+
+[dependencies.revelo]
+version = "0.4"
+optional = true
+default-features = false

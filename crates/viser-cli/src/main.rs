@@ -106,10 +106,13 @@ struct EncodeArgs {
 
 #[derive(Subcommand)]
 enum InspectCommands {
-    /// Show video file metadata via ffprobe
+    /// Show video file metadata
     Probe {
         /// Video file to inspect
         file: String,
+        /// Probe engine: "ffprobe" (default) or "revelo"
+        #[arg(long, default_value = "ffprobe")]
+        probe_engine: String,
     },
     /// Detect black frames in a video file
     BlackFrames {
@@ -424,7 +427,9 @@ async fn main() -> anyhow::Result<()> {
     match command {
         Commands::Encode(args) => cmd_encode(args).await,
         Commands::Inspect { command } => match command {
-            InspectCommands::Probe { file } => cmd_inspect_probe(&file).await,
+            InspectCommands::Probe { file, probe_engine } => {
+                cmd_inspect_probe(&file, &probe_engine).await
+            }
             InspectCommands::BlackFrames { file, duration } => {
                 cmd_inspect_blackframes(&file, duration).await
             }
@@ -526,8 +531,19 @@ async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_inspect_probe(file: &str) -> anyhow::Result<()> {
-    let result = viser_ffmpeg::probe(file).await?;
+async fn cmd_inspect_probe(file: &str, probe_engine: &str) -> anyhow::Result<()> {
+    let result = if probe_engine == "revelo" {
+        #[cfg(feature = "revelo")]
+        {
+            viser_ffmpeg::probe_revelo(file).await?
+        }
+        #[cfg(not(feature = "revelo"))]
+        {
+            anyhow::bail!("revelo probe engine requires building with --features revelo");
+        }
+    } else {
+        viser_ffmpeg::probe(file).await?
+    };
     println!("File:     {}", result.format.filename);
     println!("Format:   {}", result.format.format_long_name);
     println!("Duration: {:.2}s", result.format.duration);
@@ -643,6 +659,7 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
             max_bitrate: args.max_bitrate,
             min_vmaf: 40.0,
             max_vmaf: 97.0,
+            audio_bitrate_kbps: 0.0,
         },
         checkpoint_path: String::new(),
         vmaf_model: String::new(),

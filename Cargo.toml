@@ -22,7 +22,7 @@ members = [
 edition = "2024"
 license = "BSD-2-Clause"
 repository = "https://github.com/vbasky/viser"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [workspace.lints.rust]
 unreachable_pub = "warn"

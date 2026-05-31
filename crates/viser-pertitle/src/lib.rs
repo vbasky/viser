@@ -50,6 +50,8 @@ pub struct Result {
     pub ladder: Ladder,
     pub duration: Duration,
     pub trial_count: usize,
+    #[serde(default)]
+    pub audio_bitrate_kbps: f64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
@@ -336,7 +338,12 @@ pub async fn analyze(
     let all_hull = compute_upper(&points);
     let per_codec = compute_per_codec(&points);
     let crossovers = all_hull.crossovers();
-    let selected_ladder = viser_ladder::select(&all_hull, &cfg.ladder_opts);
+    let mut ladder_opts = cfg.ladder_opts.clone();
+    ladder_opts.audio_bitrate_kbps = source_info
+        .audio_stream()
+        .and_then(|a| if a.bit_rate > 0 { Some(a.bit_rate as f64 / 1000.0) } else { None })
+        .unwrap_or(0.0);
+    let selected_ladder = viser_ladder::select(&all_hull, &ladder_opts);
 
     if let Some(ref cp) = cp {
         let _ = cp.remove();
@@ -353,6 +360,7 @@ pub async fn analyze(
         ladder: selected_ladder,
         duration: start.elapsed(),
         trial_count: total,
+        audio_bitrate_kbps: ladder_opts.audio_bitrate_kbps,
         warnings,
     })
 }

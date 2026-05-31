@@ -2,6 +2,10 @@ mod cache;
 mod encode;
 mod path;
 mod probe;
+#[cfg(feature = "revelo")]
+mod probe_revelo;
+#[cfg(feature = "revelo")]
+pub use probe_revelo::probe as probe_revelo;
 
 pub use cache::*;
 pub use encode::*;

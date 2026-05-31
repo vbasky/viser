@@ -135,3 +135,114 @@ fn integrate_cubic(c: &Cubic, a: f64, b: f64) -> f64 {
     };
     antideriv(b) - antideriv(a)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Point;
+    use viser_ffmpeg::{Codec, Resolution};
+
+    fn pt(bitrate: f64, vmaf: f64) -> Point {
+        Point {
+            resolution: Resolution::new(1920, 1080),
+            codec: Codec::X264,
+            crf: 23,
+            bitrate,
+            vmaf,
+            psnr: 0.0,
+            ssim: 0.0,
+        }
+    }
+
+    #[test]
+    fn test_bd_rate_exact_4_points_minimum() {
+        let a = vec![pt(100.0, 70.0), pt(300.0, 80.0), pt(800.0, 90.0), pt(2000.0, 95.0)];
+        let b = vec![pt(80.0, 70.0), pt(250.0, 80.0), pt(700.0, 90.0), pt(1800.0, 95.0)];
+        let r = bd_rate(&a, &b).unwrap();
+        assert!(r < 0.0, "B is more efficient, expected negative BD-rate, got {r}");
+    }
+
+    #[test]
+    fn test_bd_rate_overlapping_range() {
+        // Curves share [80, 90] quality range
+        let a = vec![pt(200.0, 80.0), pt(500.0, 85.0), pt(1200.0, 90.0), pt(3000.0, 95.0)];
+        let b = vec![pt(150.0, 80.0), pt(400.0, 85.0), pt(1000.0, 90.0), pt(2500.0, 95.0)];
+        assert!(bd_rate(&a, &b).is_ok());
+    }
+
+    #[test]
+    fn test_bd_rate_sorted_input() {
+        // Already sorted by VMAF
+        let a = vec![pt(100.0, 70.0), pt(300.0, 75.0), pt(800.0, 85.0), pt(2000.0, 90.0)];
+        let b = a.clone();
+        let r = bd_rate(&a, &b).unwrap();
+        assert!(r.abs() < 1.0, "identical sorted curves should yield ~0");
+    }
+
+    #[test]
+    fn test_bd_rate_unsorted_input() {
+        // Unsorted by VMAF — should still work (extract_rd sorts)
+        let a = vec![pt(2000.0, 90.0), pt(100.0, 70.0), pt(800.0, 85.0), pt(300.0, 75.0)];
+        let b = vec![pt(300.0, 75.0), pt(2000.0, 90.0), pt(800.0, 85.0), pt(100.0, 70.0)];
+        assert!(bd_rate(&a, &b).is_ok());
+    }
+
+    #[test]
+    fn test_bd_rate_singular_matrix() {
+        // All points at the same VMAF quality — polynomial fit will get a zero pivot
+        let a = vec![pt(100.0, 80.0), pt(300.0, 80.0), pt(800.0, 80.0), pt(2000.0, 80.0)];
+        let b = vec![pt(100.0, 80.0), pt(300.0, 80.0), pt(800.0, 80.0), pt(2000.0, 80.0)];
+        // fit_cubic returns [0;4] for singular matrices, integration gives 0
+        // but the overlapping range check may still pass
+        let r = bd_rate(&a, &b);
+        // Should either error or compute near-zero
+        match r {
+            Ok(v) => assert!(v.abs() < 1e-6, "singular matrix should give ~0, got {v}"),
+            Err(_) => {} // singular matrix may error on overlapping range
+        }
+    }
+
+    #[test]
+    fn test_extract_rd_sorts_by_quality() {
+        let points = vec![pt(2000.0, 90.0), pt(100.0, 70.0), pt(800.0, 85.0), pt(300.0, 75.0)];
+        let (log_rates, qualities) = extract_rd(&points);
+        assert!(
+            qualities.windows(2).all(|w| w[0] <= w[1]),
+            "qualities should be sorted ascending, got {qualities:?}"
+        );
+        assert_eq!(qualities.len(), 4);
+        assert_eq!(log_rates.len(), 4);
+    }
+
+    #[test]
+    fn test_fit_cubic_perfect_linear() {
+        // y = 0.5 + 1.0*x (perfectly fit by cubic)
+        let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+        let y: Vec<f64> = x.iter().map(|xi| 0.5 + 1.0 * xi).collect();
+        let coeff = fit_cubic(&x, &y);
+        assert!(coeff[0].abs() > 0.0, "constant term should be non-zero");
+        assert!((coeff[1] - 1.0).abs() < 0.01, "linear term should be ~1.0, got {}", coeff[1]);
+    }
+
+    #[test]
+    fn test_integrate_cubic_linear() {
+        // c[0]x integrated from 0 to 2 = c[0]*2
+        let c = [1.0_f64, 0.0, 0.0, 0.0];
+        let result = integrate_cubic(&c, 0.0, 2.0);
+        assert!((result - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_integrate_cubic_quadratic() {
+        // c[1]*x^2/2 integrated from 0 to 2 = 3*4/2 = 6
+        let c = [0.0_f64, 3.0, 0.0, 0.0];
+        let result = integrate_cubic(&c, 0.0, 2.0);
+        assert!((result - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_bd_rate_error_display() {
+        let err = BdRateError("test error".into());
+        assert_eq!(format!("{err}"), "bdrate: test error");
+    }
+}

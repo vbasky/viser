@@ -254,6 +254,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-deque"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dd111b7b7f7d55b72c0a6ae361660ee5853c9af73f70c3c2ef6858b950e2e51"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.9.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -314,6 +339,12 @@ dependencies = [
  "winapi",
  "wio",
 ]
+
+[[package]]
+name = "either"
+version = "1.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
 name = "equivalent"
@@ -814,6 +845,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "rayon"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
+dependencies = [
+ "either",
+ "rayon-core",
+]
+
+[[package]]
+name = "rayon-core"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
+dependencies = [
+ "crossbeam-deque",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -832,6 +883,121 @@ dependencies = [
  "libredox",
  "thiserror",
 ]
+
+[[package]]
+name = "revelo"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "485daab842ca4a7927b5ad256f9e126f8983af5d919326fd383c9763aead98b5"
+dependencies = [
+ "revelo-core",
+ "revelo-dispatcher",
+ "revelo-parsers-tag",
+]
+
+[[package]]
+name = "revelo-core"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f775495f706f5bf1b96fbc39377e947690216aed61380601034563b3e21d98c6"
+dependencies = [
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-dispatcher"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea8a3df4451e3e8c0f4c8fcc2cdd4bd70259a59858c73072968ff9bee884c59f"
+dependencies = [
+ "rayon",
+ "revelo-core",
+ "revelo-parsers-archive",
+ "revelo-parsers-audio",
+ "revelo-parsers-container",
+ "revelo-parsers-image",
+ "revelo-parsers-tag",
+ "revelo-parsers-text",
+ "revelo-parsers-video",
+]
+
+[[package]]
+name = "revelo-parsers-archive"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d1b335a37a1fcdab26c356cb002e9151d2885b7e3bdc0f09edc45752cd4aeb3"
+dependencies = [
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-audio"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a6db955c485e4a497a5cbac6fe48c9a00ee05d06b0249ccc7a743ab9be7b1ea"
+dependencies = [
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-container"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ec16f1da9b19091455cc9c1b943d6597215f26518bdbace4431cbad39a1711"
+dependencies = [
+ "revelo-core",
+ "revelo-parsers-video",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-image"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "493b98d8b803aaf9dcdf511c238479fd5026630509298abaee307d1eee8f1a2b"
+dependencies = [
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-tag"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6506149ce35d2ca6a5c59ae685b585e4039ff93e63ac891361460ac8363d8d43"
+dependencies = [
+ "flate2",
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-text"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aab1f9767f0341d4b20315cf318c1d563253fa66b4e1a9c77d461cf6c63a6af"
+dependencies = [
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-video"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3fdaf6c26bb9d73380ae8566740a59c42d226ec35fe01652900b82623e26f1d"
+dependencies = [
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-util"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a6acd363ac2aaba742becc662e82ae125ad5c36465d8019fb8689a06c8dea01"
 
 [[package]]
 name = "rustc_version"
@@ -1171,7 +1337,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "viser-chart"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "plotters",
@@ -1183,7 +1349,7 @@ dependencies = [
 
 [[package]]
 name = "viser-checkpoint"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "hex",
@@ -1197,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "viser-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1225,7 +1391,7 @@ dependencies = [
 
 [[package]]
 name = "viser-compare"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1235,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "viser-complexity"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1245,7 +1411,7 @@ dependencies = [
 
 [[package]]
 name = "viser-contextaware"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1260,7 +1426,7 @@ dependencies = [
 
 [[package]]
 name = "viser-encoding"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1272,9 +1438,10 @@ dependencies = [
 
 [[package]]
 name = "viser-ffmpeg"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
+ "revelo",
  "serde",
  "serde_json",
  "thiserror",
@@ -1284,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "viser-hull"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "viser-ffmpeg",
@@ -1292,7 +1459,7 @@ dependencies = [
 
 [[package]]
 name = "viser-ladder"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "viser-ffmpeg",
@@ -1301,7 +1468,7 @@ dependencies = [
 
 [[package]]
 name = "viser-persegment"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1314,7 +1481,7 @@ dependencies = [
 
 [[package]]
 name = "viser-pershot"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1331,7 +1498,7 @@ dependencies = [
 
 [[package]]
 name = "viser-pertitle"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1349,7 +1516,7 @@ dependencies = [
 
 [[package]]
 name = "viser-quality"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1362,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "viser-shot"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",

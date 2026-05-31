@@ -279,6 +279,165 @@ fn max_val(vals: &[f64]) -> f64 {
     vals.iter().copied().fold(f64::NEG_INFINITY, f64::max)
 }
 
+/// Content type classification result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContentType {
+    /// Natural video content (film, sports, etc.)
+    Natural,
+    /// Screen content (slides, code, UI, screencasts)
+    Screen,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenContentDetection {
+    pub content_type: ContentType,
+    pub confidence: f64, // 0-100
+    pub reason: String,
+}
+
+/// Detects whether a video is screen content based on complexity profile heuristics.
+///
+/// Screen content signatures:
+/// - Very high spatial complexity (sharp edges, text)
+/// - Very low temporal complexity (static or near-static)
+/// - High fraction of frames with minimal temporal change
+pub fn detect_screen_content(profile: &Profile) -> ScreenContentDetection {
+    if profile.frames.is_empty() {
+        return ScreenContentDetection {
+            content_type: ContentType::Natural,
+            confidence: 0.0,
+            reason: "no frames analyzed".into(),
+        };
+    }
+
+    // Screen content heuristics
+    let static_fraction = profile.frames.iter().filter(|f| f.temporal < 1.5).count() as f64
+        / profile.frames.len() as f64;
+
+    let has_sharp_edges = profile.avg_spatial > 0.75;
+    let is_mostly_static = static_fraction > 0.8;
+    let high_dct_low_temporal = profile.avg_temporal < 2.0
+        && (profile.segments.iter().any(|s| s.avg_spatial > 0.7) || profile.avg_spatial > 0.7);
+
+    let score = if has_sharp_edges && is_mostly_static {
+        // Classic slide/UI: sharp edges, barely moves
+        90.0
+    } else if high_dct_low_temporal {
+        // Code/screenshot: high DCT energy but low motion
+        70.0
+    } else if is_mostly_static && profile.avg_spatial > 0.6 {
+        // Mostly static with moderate edges
+        50.0
+    } else if static_fraction > 0.6 && profile.avg_temporal < 3.0 {
+        // Leaning static
+        30.0
+    } else {
+        0.0
+    };
+
+    let content_type = if score >= 50.0 { ContentType::Screen } else { ContentType::Natural };
+    let reason = if score >= 90.0 {
+        format!(
+            "sharp edges (spatial={:.2}) + mostly static ({:.0}% frames) — classic screen content",
+            profile.avg_spatial,
+            static_fraction * 100.0
+        )
+    } else if score >= 70.0 {
+        format!(
+            "high spatial/DCT energy (spatial={:.2}) with low temporal ({:.1}) — likely screen content",
+            profile.avg_spatial, profile.avg_temporal
+        )
+    } else if score >= 50.0 {
+        format!(
+            "mostly static ({:.0}% frames) with moderate spatial ({:.2}) — possible screen content",
+            static_fraction * 100.0,
+            profile.avg_spatial
+        )
+    } else if score >= 30.0 {
+        format!("leaning static ({:.0}% frames)", static_fraction * 100.0)
+    } else {
+        "natural video content detected".into()
+    };
+
+    ScreenContentDetection { content_type, confidence: score, reason }
+}
+
+#[cfg(test)]
+mod screen_tests {
+    use super::*;
+
+    fn mk_frame(pts_secs: f64, spatial: f64, temporal: f64, dct: f64) -> FrameComplexity {
+        FrameComplexity {
+            pts: Duration::from_secs_f64(pts_secs),
+            spatial,
+            temporal,
+            dct_energy: dct,
+        }
+    }
+
+    #[test]
+    fn test_detect_screen_content_slides() {
+        // All frames have sharp edges, no motion
+        let frames: Vec<_> =
+            (0..100).map(|i| mk_frame(i as f64 * 0.04, 0.85, 0.2, 100.0)).collect();
+        let profile = Profile {
+            frames: frames.clone(),
+            segments: vec![],
+            avg_spatial: 0.85,
+            avg_temporal: 0.2,
+            overall_score: 0.0,
+        };
+        let detection = detect_screen_content(&profile);
+        assert_eq!(detection.content_type, ContentType::Screen);
+        assert!(detection.confidence >= 90.0);
+    }
+
+    #[test]
+    fn test_detect_screen_content_natural_video() {
+        let frames: Vec<_> = (0..100).map(|i| mk_frame(i as f64 * 0.04, 0.5, 10.0, 50.0)).collect();
+        let profile = Profile {
+            frames,
+            segments: vec![],
+            avg_spatial: 0.5,
+            avg_temporal: 10.0,
+            overall_score: 0.0,
+        };
+        let detection = detect_screen_content(&profile);
+        assert_eq!(detection.content_type, ContentType::Natural);
+        assert_eq!(detection.confidence, 0.0);
+    }
+
+    #[test]
+    fn test_detect_screen_content_empty() {
+        let profile = Profile {
+            frames: vec![],
+            segments: vec![],
+            avg_spatial: 0.0,
+            avg_temporal: 0.0,
+            overall_score: 0.0,
+        };
+        let detection = detect_screen_content(&profile);
+        assert_eq!(detection.content_type, ContentType::Natural);
+        assert_eq!(detection.confidence, 0.0);
+    }
+
+    #[test]
+    fn test_detect_screen_content_code_capture() {
+        // High spatial, low temporal, moderate DCT
+        let frames: Vec<_> = (0..100).map(|i| mk_frame(i as f64 * 0.04, 0.78, 1.5, 80.0)).collect();
+        let profile = Profile {
+            frames: frames.clone(),
+            segments: vec![],
+            avg_spatial: 0.78,
+            avg_temporal: 1.5,
+            overall_score: 0.0,
+        };
+        let detection = detect_screen_content(&profile);
+        assert_eq!(detection.content_type, ContentType::Screen);
+        assert!(detection.confidence >= 70.0, "expected >= 70, got {}", detection.confidence);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
