@@ -1,4 +1,18 @@
 # Changelog
+## [0.3.0] - 2026-05-31
+
+### Added
+
+- **SSIMULACRA2 and butteraugli quality metrics** — `viser-quality` now supports
+  five perceptual metrics. SSIMULACRA2 and butteraugli run their respective CLI
+  tools on extracted PNG frames; missing binaries degrade gracefully to 0.0.
+  The `Metric` enum and `Result` struct include `Ssimulacra2` and `Butteraugli`
+  variants, and both are enabled by default in `MeasureOpts`.
+
+### Changed
+
+- `viser-quality` README updated with prerequisites for the new metrics.
+
 ## [0.2.1] - 2026-05-29
 
 ### Added
