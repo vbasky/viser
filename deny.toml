@@ -1,18 +1,24 @@
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+version = 2
 yanked = "deny"
-notice = "warn"
+# Scope unmaintained-crate checks to direct workspace dependencies (actionable),
+# rather than failing on deep transitive crates we don't control.
+unmaintained = "workspace"
+ignore = []
 
 [licenses]
+version = 2
 allow = [
     "BSD-2-Clause",
     "MIT",
     "Apache-2.0",
     "Unicode-3.0",
+    "ISC",
+    # File-level weak copyleft; only present in unmodified transitive deps
+    # (dwrote, option-ext via plotters/font-kit). No obligation on viser's own code.
+    "MPL-2.0",
 ]
-copyleft = "deny"
-default = "deny"
+confidence-threshold = 0.8
 
 [[licenses.clarify]]
 name = "rayon"
