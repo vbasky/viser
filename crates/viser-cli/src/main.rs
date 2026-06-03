@@ -400,7 +400,7 @@ async fn main() -> anyhow::Result<()> {
             if e.kind() == clap::error::ErrorKind::DisplayHelp
                 || e.kind() == clap::error::ErrorKind::DisplayVersion
             {
-                let _ = e.exit();
+                e.exit();
             } else {
                 let _ = e.print();
             }
@@ -779,13 +779,13 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
 
     println!("Viser Per-Title Delivery");
     println!("  Analysis: {}", args.analysis);
-    println!("  Source:   {}", source);
+    println!("  Source:   {source}");
     println!("  Rungs:    {}", result.ladder.rungs.len());
-    println!("  Preset:   {}", preset);
+    println!("  Preset:   {preset}");
     println!("  Mode:     {}", args.mode);
-    println!("  Parallel: {}", parallel);
+    println!("  Parallel: {parallel}");
     if let Some(chunk_seconds) = args.chunk_seconds {
-        println!("  Chunks:   {:.1}s", chunk_seconds);
+        println!("  Chunks:   {chunk_seconds:.1}s");
     }
     for warning in &result.warnings {
         println!("  Warning:  {warning}");
@@ -828,7 +828,7 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
                 job.output
             );
         }
-        println!("\n  Manifest would be written to: {}", manifest_path);
+        println!("\n  Manifest would be written to: {manifest_path}");
         return Ok(());
     }
 
@@ -908,7 +908,7 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
         artifacts: delivered,
     };
     std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
-    println!("\nManifest saved to: {}", manifest_path);
+    println!("\nManifest saved to: {manifest_path}");
 
     Ok(())
 }
@@ -1315,55 +1315,8 @@ fn chunk_count(duration: f64, chunk_seconds: Option<f64>) -> usize {
     chunk_seconds.map(|seconds| build_chunks(duration, seconds).len()).unwrap_or(1)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_build_delivery_output_path() {
-        let rung = viser_ladder::Rung {
-            point: viser_hull::Point {
-                resolution: viser_ffmpeg::RES_1080P,
-                codec: viser_ffmpeg::Codec::X264,
-                crf: 23,
-                bitrate: 3000.0,
-                vmaf: 95.0,
-                psnr: 40.0,
-                ssim: 0.99,
-            },
-            index: 1,
-        };
-
-        let path = build_delivery_output_path("dist", "clips/demo.y4m", &rung, "mp4");
-        assert_eq!(path, Path::new("dist").join("demo_rung02_1080p_libx264_3000k.mp4"));
-    }
-
-    #[test]
-    fn test_effective_parallel_uses_explicit_value() {
-        assert_eq!(effective_parallel(3), 3);
-    }
-
-    #[test]
-    fn test_effective_parallel_auto_is_at_least_one() {
-        assert!(effective_parallel(0) >= 1);
-    }
-
-    #[test]
-    fn test_build_chunks_splits_remainder() {
-        assert_eq!(build_chunks(25.0, 10.0), vec![(0.0, 10.0), (10.0, 10.0), (20.0, 5.0)]);
-    }
-
-    #[test]
-    fn test_parse_delivery_mode_accepts_capped_crf_alias() {
-        assert_eq!(
-            parse_delivery_mode("capped_crf").unwrap(),
-            viser_ffmpeg::RateControlMode::CappedCrf
-        );
-    }
-}
-
 async fn cmd_inspect_blackframes(file: &str, min_duration: f64) -> anyhow::Result<()> {
-    let filter = format!("blackdetect=d={}:pic_th=0.98", min_duration);
+    let filter = format!("blackdetect=d={min_duration}:pic_th=0.98");
     let output = tokio::process::Command::new(viser_ffmpeg::ffmpeg_path())
         .args(["-i", file, "-vf", &filter, "-f", "null", "-"])
         .stderr(std::process::Stdio::piped())
@@ -1425,4 +1378,51 @@ async fn cmd_inspect_loudness(file: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_delivery_output_path() {
+        let rung = viser_ladder::Rung {
+            point: viser_hull::Point {
+                resolution: viser_ffmpeg::RES_1080P,
+                codec: viser_ffmpeg::Codec::X264,
+                crf: 23,
+                bitrate: 3000.0,
+                vmaf: 95.0,
+                psnr: 40.0,
+                ssim: 0.99,
+            },
+            index: 1,
+        };
+
+        let path = build_delivery_output_path("dist", "clips/demo.y4m", &rung, "mp4");
+        assert_eq!(path, Path::new("dist").join("demo_rung02_1080p_libx264_3000k.mp4"));
+    }
+
+    #[test]
+    fn test_effective_parallel_uses_explicit_value() {
+        assert_eq!(effective_parallel(3), 3);
+    }
+
+    #[test]
+    fn test_effective_parallel_auto_is_at_least_one() {
+        assert!(effective_parallel(0) >= 1);
+    }
+
+    #[test]
+    fn test_build_chunks_splits_remainder() {
+        assert_eq!(build_chunks(25.0, 10.0), vec![(0.0, 10.0), (10.0, 10.0), (20.0, 5.0)]);
+    }
+
+    #[test]
+    fn test_parse_delivery_mode_accepts_capped_crf_alias() {
+        assert_eq!(
+            parse_delivery_mode("capped_crf").unwrap(),
+            viser_ffmpeg::RateControlMode::CappedCrf
+        );
+    }
 }

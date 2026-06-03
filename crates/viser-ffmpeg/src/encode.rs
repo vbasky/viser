@@ -230,7 +230,7 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
             let bufsize = if job.bufsize > 0.0 { job.bufsize } else { job.max_bitrate * 2.0 };
             args.extend(["-crf".into(), job.crf.to_string()]);
             args.extend(["-maxrate".into(), format!("{:.0}k", job.max_bitrate)]);
-            args.extend(["-bufsize".into(), format!("{:.0}k", bufsize)]);
+            args.extend(["-bufsize".into(), format!("{bufsize:.0}k")]);
         }
         RateControlMode::Vbr => {
             if job.target_bitrate <= 0.0 {

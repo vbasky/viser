@@ -238,7 +238,7 @@ detected dynamic range and color metadata to make that decision explicit.
 | Codecs | 3 (H.264, H.265, AV1) |
 | Quality metrics | 5 (VMAF, PSNR, SSIM, SSIMULACRA2, Butteraugli) |
 | License | BSD-2-Clause |
-| MSRV | 1.85 |
+| MSRV | 1.88 |
 
 ## Status
 

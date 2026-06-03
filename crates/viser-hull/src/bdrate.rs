@@ -86,9 +86,7 @@ fn fit_cubic(x: &[f64], y: &[f64]) -> Cubic {
 
     let mut mat = [[0.0_f64; 5]; 4];
     for i in 0..4 {
-        for j in 0..4 {
-            mat[i][j] = sums[i + j];
-        }
+        mat[i][..4].copy_from_slice(&sums[i..(4 + i)]);
         mat[i][4] = rhs[i];
     }
 
@@ -196,9 +194,9 @@ mod tests {
         // but the overlapping range check may still pass
         let r = bd_rate(&a, &b);
         // Should either error or compute near-zero
-        match r {
-            Ok(v) => assert!(v.abs() < 1e-6, "singular matrix should give ~0, got {v}"),
-            Err(_) => {} // singular matrix may error on overlapping range
+        // (singular matrix may error on overlapping range)
+        if let Ok(v) = r {
+            assert!(v.abs() < 1e-6, "singular matrix should give ~0, got {v}");
         }
     }
 

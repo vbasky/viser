@@ -12,7 +12,7 @@ use viser_ladder::{self, Ladder, Opts as LadderOpts};
 use viser_quality::{self, MeasureOpts, Metric};
 
 /// Config defines the search space and parameters for per-title analysis.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(flatten)]
     pub encoding: EncodingConfig,
@@ -23,18 +23,6 @@ pub struct Config {
     pub vmaf_model: String,
     #[serde(default)]
     pub allow_hdr: bool,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            encoding: EncodingConfig::default(),
-            ladder_opts: LadderOpts::default(),
-            checkpoint_path: String::new(),
-            vmaf_model: String::new(),
-            allow_hdr: false,
-        }
-    }
 }
 
 /// Complete output of a per-title analysis.

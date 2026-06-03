@@ -479,7 +479,7 @@ mod tests {
     #[test]
     fn test_compute_score_bounds() {
         let s = compute_score(0.5, 0.0);
-        assert!(s >= 0.0 && s <= 100.0);
+        assert!((0.0..=100.0).contains(&s));
     }
 
     #[test]
@@ -651,6 +651,8 @@ lavfi.signalstats.YLOW=50.0
         assert_eq!(segs.len(), 1);
         assert_eq!(segs[0].scene_class, SceneClass::Black);
     }
+
+    #[test]
     fn test_analyze_opts_default() {
         let opts = AnalyzeOpts::default();
         assert_eq!(opts.segment_duration, Duration::from_secs(2));

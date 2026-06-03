@@ -1,4 +1,30 @@
 # Changelog
+## [0.4.1] - 2026-06-03
+
+### Changed
+
+- **Trimmed tokio features** — the workspace no longer enables tokio's `full`
+  feature set. Each crate now declares only the features it uses (`rt`, `process`,
+  `io-util`, `sync`, `net`, `macros` as needed), dropping unused subsystems
+  (`fs`, `time`, `signal`, …) from the dependency graph and leaving the library
+  crates leaner for downstream consumers.
+
+### Fixed
+
+- **Activated a dormant test** — `viser-complexity`'s `test_analyze_opts_default`
+  was missing its `#[test]` attribute and had never run; it is now part of the suite.
+- **Corrected MSRV in the README project table** — it listed 1.85 while the actual
+  MSRV (and the badge) is 1.88.
+- Removed the unknown `clippy::manual_checked_ops` lint allow and cleared the
+  clippy lint debt that surfaced once warnings became errors.
+
+### CI
+
+- `clippy` now runs with `-D warnings`, so lint regressions fail the build.
+- Added a macOS runner to the test matrix and an MSRV (1.88) build job.
+- Added a `cargo-deny` job that enforces the existing `deny.toml`
+  (advisories, licenses, bans).
+
 ## [0.4.0] - 2026-05-31
 
 ### Added

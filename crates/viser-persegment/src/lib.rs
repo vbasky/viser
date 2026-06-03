@@ -69,7 +69,7 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
     .await?;
 
     // Step 2: Map complexity to initial CRF
-    let mut segments: Vec<SegmentResult> = profile
+    let segments: Vec<SegmentResult> = profile
         .segments
         .iter()
         .map(|seg| SegmentResult {

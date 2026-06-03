@@ -1,6 +1,6 @@
 [package]
 name = "viser-quality"
-version = "0.4.0"
+version = "0.4.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,10 +17,10 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.4.0" }
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.4.1" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["process", "io-util"] }
 tracing = { workspace = true }
 tempfile = "3"

@@ -12,12 +12,21 @@ env:
 jobs:
   check:
     name: check + test + lint + doc
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v5
 
-      - name: install system deps
+      - name: install system deps (linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+
+      - name: install system deps (macos)
+        if: runner.os == 'macOS'
+        run: brew install fontconfig
 
       - name: install rust
         run: |
@@ -41,7 +50,7 @@ jobs:
         run: cargo check --workspace --all-targets
 
       - name: clippy
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: test
         run: cargo test --workspace
@@ -50,3 +59,36 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --no-deps --document-private-items
+
+  msrv:
+    name: msrv (1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: install system deps
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+
+      - name: install rust 1.88
+        run: |
+          rustup toolchain install 1.88 --no-self-update
+          rustup default 1.88
+
+      - name: cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: check
+        run: cargo check --workspace --all-targets
+
+  deny:
+    name: cargo-deny (advisories + licenses + bans)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
