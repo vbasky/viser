@@ -16,6 +16,7 @@ members = [
     "crates/viser-compare",
     "crates/viser-chart",
     "crates/viser-cli",
+    "crates/viser",
 ]
 
 [workspace.package]

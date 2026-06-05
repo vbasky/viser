@@ -1288,6 +1288,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "viser"
+version = "0.4.1"
+dependencies = [
+ "viser-chart",
+ "viser-checkpoint",
+ "viser-compare",
+ "viser-complexity",
+ "viser-contextaware",
+ "viser-encoding",
+ "viser-ffmpeg",
+ "viser-hull",
+ "viser-ladder",
+ "viser-persegment",
+ "viser-pershot",
+ "viser-pertitle",
+ "viser-quality",
+ "viser-shot",
+]
+
+[[package]]
 name = "viser-chart"
 version = "0.4.1"
 dependencies = [

@@ -1,0 +1,67 @@
+[package]
+name = "viser"
+version = "0.4.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Video Encoding Optimizer — facade crate re-exporting the viser library crates"
+keywords = ["video", "encoding", "ffmpeg", "vmaf", "per-title"]
+categories = ["multimedia::video", "algorithms"]
+readme = "README.md"
+
+[lib]
+name = "viser"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.4.1", optional = true }
+viser-quality = { path = "../viser-quality", version = "0.4.1", optional = true }
+viser-hull = { path = "../viser-hull", version = "0.4.1", optional = true }
+viser-ladder = { path = "../viser-ladder", version = "0.4.1", optional = true }
+viser-shot = { path = "../viser-shot", version = "0.4.1", optional = true }
+viser-complexity = { path = "../viser-complexity", version = "0.4.1", optional = true }
+viser-encoding = { path = "../viser-encoding", version = "0.4.1", optional = true }
+viser-checkpoint = { path = "../viser-checkpoint", version = "0.4.1", optional = true }
+viser-pertitle = { path = "../viser-pertitle", version = "0.4.1", optional = true }
+viser-pershot = { path = "../viser-pershot", version = "0.4.1", optional = true }
+viser-persegment = { path = "../viser-persegment", version = "0.4.1", optional = true }
+viser-contextaware = { path = "../viser-contextaware", version = "0.4.1", optional = true }
+viser-compare = { path = "../viser-compare", version = "0.4.1", optional = true }
+viser-chart = { path = "../viser-chart", version = "0.4.1", optional = true }
+
+[features]
+default = ["full"]
+full = [
+    "ffmpeg",
+    "quality",
+    "hull",
+    "ladder",
+    "shot",
+    "complexity",
+    "encoding",
+    "checkpoint",
+    "pertitle",
+    "pershot",
+    "persegment",
+    "contextaware",
+    "compare",
+    "chart",
+]
+ffmpeg = ["dep:viser-ffmpeg"]
+quality = ["dep:viser-quality"]
+hull = ["dep:viser-hull"]
+ladder = ["dep:viser-ladder"]
+shot = ["dep:viser-shot"]
+complexity = ["dep:viser-complexity"]
+encoding = ["dep:viser-encoding"]
+checkpoint = ["dep:viser-checkpoint"]
+pertitle = ["dep:viser-pertitle"]
+pershot = ["dep:viser-pershot"]
+persegment = ["dep:viser-persegment"]
+contextaware = ["dep:viser-contextaware"]
+compare = ["dep:viser-compare"]
+chart = ["dep:viser-chart"]
