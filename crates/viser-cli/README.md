@@ -1,5 +1,7 @@
 # viser-cli
 
+![viser - Video Encoding Optimizer](https://raw.githubusercontent.com/vbasky/viser/main/docs/banner.png)
+
 CLI binary for viser — the main entry point for all optimization methods, encode commands, quality measurement, and comparison.
 
 ## Commands

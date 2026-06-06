@@ -145,6 +145,7 @@ jobs:
             viser-contextaware
             viser-compare
             viser-chart
+            viser
             viser-cli
           )
 
