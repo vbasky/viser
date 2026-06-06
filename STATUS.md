@@ -18,13 +18,20 @@ encoding profiles, segment-level CRF tuning, comparison player.
 
 ---
 
-## P0 — test coverage
+## P0 — correctness fixes (small, do first)
 
 - [ ] **Core algorithm tests.** Convex hull, BD-rate, Trellis allocation, and
       shot boundary detection are numerically tricky — property-based tests
       would catch regressions early.
 - [ ] **Integration tests.** End-to-end `per-title analyze` + `per-title deliver`
       on a known reference clip with expected output.
+- [ ] **VMAF model validation.** Check that the VMAF model file exists and is
+      readable before starting encodes — currently fails mid-run.
+- [ ] **FFmpeg version detection.** Validate minimum FFmpeg/libvmaf versions at
+      startup and surface clear errors instead of cryptic encode failures.
+- [ ] **10-bit pipeline correctness.** Verify that 10-bit content is correctly
+      detected, warned about, and that VMAF scores account for bit depth
+      differences between reference and distorted.
 
 ## P1 — highest-value features
 
