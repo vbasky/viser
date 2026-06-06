@@ -1,6 +1,6 @@
 # viser — Video Encoding Optimizer
 
-![viser - Video Encoding Optimizer](docs/banner.png)
+![viser - Video Encoding Optimizer](https://raw.githubusercontent.com/vbasky/viser/main/docs/banner.png)
 
 **Name:** *Viser* blends *vision* + *optimizer* — it sees the optimal encoding for every video. It's also French *viser* ("to aim/see").
 
@@ -315,6 +315,13 @@ viser is designed for content-adaptive VOD encoding and explicitly does not addr
 | [Chunked Encoding](docs/chunked-encoding.md) | Parallel encoding for production |
 | [Comparison Player](docs/comparison-player.md) | Side-by-side QA with VMAF timeline |
 | [Robustness Assessment](docs/robustness-assessment.md) | Project assessment: strengths, weaknesses, and feature gaps |
+
+## Status
+
+`0.4.x` — battle-tested algorithms ported from a production Go implementation.
+Per-title analysis, per-shot Trellis optimization, and quality measurement are
+covered by integration tests. The API may evolve before `1.0`. See the
+[status & roadmap](STATUS.md) for what's covered today and what's planned.
 
 ## License
 
