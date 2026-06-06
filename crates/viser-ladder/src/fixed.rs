@@ -3,13 +3,18 @@ use viser_ffmpeg::Resolution;
 /// A fixed (non-optimized) bitrate ladder for comparison.
 #[derive(Debug, Clone)]
 pub struct FixedLadder {
+    /// Human-readable name of the preset.
     pub name: String,
+    /// Ladder rungs in ascending bitrate order.
     pub rungs: Vec<FixedRung>,
 }
 
+/// A single rung of a fixed ladder: a resolution paired with a bitrate.
 #[derive(Debug, Clone)]
 pub struct FixedRung {
+    /// Resolution for this rung.
     pub resolution: Resolution,
+    /// Bitrate for this rung in kbps.
     pub bitrate: f64, // kbps
 }
 
@@ -51,10 +56,12 @@ pub fn apple_hls() -> FixedLadder {
 }
 
 impl FixedLadder {
+    /// Sum of all rung bitrates in kbps.
     pub fn total_bitrate(&self) -> f64 {
         self.rungs.iter().map(|r| r.bitrate).sum()
     }
 
+    /// Bitrate (kbps) of the top (highest) rung, or 0.0 if empty.
     pub fn top_bitrate(&self) -> f64 {
         self.rungs.last().map(|r| r.bitrate).unwrap_or(0.0)
     }

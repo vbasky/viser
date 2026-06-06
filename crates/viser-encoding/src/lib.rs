@@ -1,3 +1,9 @@
+//! Shared encoding configuration for the `viser` video-encoding-optimizer workspace.
+//!
+//! Provides the common `Config` of encoding parameters used across all optimization modes,
+//! codec-specific preset mapping (`preset_for_codec`), non-blocking progress reporting, and
+//! cleanup of orphaned temp directories left behind by crashes.
+
 mod cleanup;
 mod progress;
 
@@ -10,12 +16,19 @@ use viser_ffmpeg::{Codec, RES_480P, RES_720P, RES_1080P, RateControlMode, Resolu
 /// Common encoding parameters shared across all optimization modes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    /// Output resolutions to encode and evaluate.
     pub resolutions: Vec<Resolution>,
+    /// CRF (constant rate factor) quality values to sweep.
     pub crf_values: Vec<i32>,
+    /// Codecs to encode with.
     pub codecs: Vec<Codec>,
+    /// Generic preset name (e.g. `"veryfast"`); mapped per codec via `preset_for_codec`.
     pub preset: String,
+    /// Frame subsample interval for VMAF scoring; 0 evaluates every frame.
     pub subsample: i32,
+    /// Number of concurrent encodes; 0 means auto (see `effective_parallel`).
     pub parallel: i32,
+    /// Rate control mode (e.g. CRF) used for encoding.
     pub rate_control: RateControlMode,
 }
 
@@ -34,6 +47,7 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Validates the configuration, returning an error if any field is empty or out of range.
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.resolutions.is_empty() {
             anyhow::bail!("must specify at least one resolution");

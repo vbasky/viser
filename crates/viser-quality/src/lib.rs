@@ -1,3 +1,10 @@
+//! Video quality measurement for the `viser` video-encoding-optimizer workspace.
+//!
+//! Computes VMAF, PSNR, SSIM, SSIMULACRA2, and butteraugli scores between a
+//! reference and a distorted video. VMAF/PSNR/SSIM use FFmpeg's libvmaf filter,
+//! while SSIMULACRA2 and butteraugli shell out to their CLI tools on extracted
+//! PNG frames. See `measure` for the entry point.
+
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::warn;
@@ -7,41 +14,68 @@ use viser_ffmpeg::{ProbeCache, ffmpeg_path};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Metric {
+    /// Netflix VMAF perceptual score (0-100, higher is better).
     Vmaf,
+    /// Peak signal-to-noise ratio in dB (higher is better).
     Psnr,
+    /// Structural similarity index (0-1, higher is better).
     Ssim,
+    /// SSIMULACRA2 perceptual score (higher is better), via the `ssimulacra2` CLI.
     Ssimulacra2,
+    /// Butteraugli perceptual distance (lower is better), via the `butteraugli` CLI.
     Butteraugli,
 }
 
+/// Aggregate (pooled) quality scores, with optional per-frame breakdown.
+///
+/// Each score is `0.0` when its metric was not requested or is unavailable.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Result {
+    /// Mean VMAF score.
     pub vmaf: f64,
+    /// Mean PSNR (dB).
     pub psnr: f64,
+    /// Mean SSIM.
     pub ssim: f64,
+    /// SSIMULACRA2 score for the sampled frame.
     pub ssimulacra2: f64,
+    /// Butteraugli distance for the sampled frame.
     pub butteraugli: f64,
+    /// Per-frame scores; populated only when `MeasureOpts::per_frame` is set.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub frames: Vec<FrameResult>,
 }
 
+/// Quality scores for a single frame.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrameResult {
+    /// Frame index within the video.
     pub frame_num: i32,
+    /// VMAF score for this frame.
     pub vmaf: f64,
+    /// PSNR (dB) for this frame.
     pub psnr: f64,
+    /// SSIM for this frame.
     pub ssim: f64,
+    /// SSIMULACRA2 score for this frame.
     pub ssimulacra2: f64,
+    /// Butteraugli distance for this frame.
     pub butteraugli: f64,
 }
 
+/// Options controlling a `measure` call.
 #[derive(Debug, Clone)]
 pub struct MeasureOpts {
+    /// Metrics to compute; an empty list defaults to VMAF, PSNR, and SSIM.
     pub metrics: Vec<Metric>,
+    /// Subsample factor for libvmaf (every Nth frame); `0` means no subsampling.
     pub subsample: i32,
+    /// VMAF model version name (e.g. `"vmaf_v0.6.1"`).
     pub model: String,
+    /// When `true`, also collect per-frame scores into `Result::frames`.
     pub per_frame: bool,
+    /// Optional probe cache reused across measurements to avoid redundant probes.
     pub probe_cache: Option<ProbeCache>,
 }
 

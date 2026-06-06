@@ -1,3 +1,11 @@
+//! Spatial, temporal, and DCT energy complexity analysis for video.
+//!
+//! Extracts per-frame complexity metrics (entropy, inter-frame difference, DCT energy)
+//! via FFmpeg, aggregates them into segments with scene classification, and computes an
+//! overall complexity score. Also detects screen content versus natural video.
+//!
+//! Part of the `viser` video-encoding-optimizer workspace.
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::Duration;
@@ -31,39 +39,63 @@ impl fmt::Display for SceneClass {
     }
 }
 
+/// Complexity metrics for a single frame.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrameComplexity {
+    /// Presentation timestamp of the frame.
     pub pts: Duration,
-    pub spatial: f64,    // normalized entropy (0-1)
-    pub temporal: f64,   // inter-frame luma difference (0-255)
+    /// Spatial complexity: normalized luma entropy (0-1).
+    pub spatial: f64, // normalized entropy (0-1)
+    /// Temporal complexity: inter-frame luma difference (0-255).
+    pub temporal: f64, // inter-frame luma difference (0-255)
+    /// Average DCT coefficient energy.
     pub dct_energy: f64, // average DCT coefficient energy
 }
 
+/// Aggregated complexity metrics over a time segment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentComplexity {
+    /// Segment start time.
     pub start: Duration,
+    /// Segment end time.
     pub end: Duration,
+    /// Segment length (`end - start`).
     pub duration: Duration,
+    /// Mean spatial complexity over the segment.
     pub avg_spatial: f64,
+    /// Mean temporal complexity over the segment.
     pub avg_temporal: f64,
+    /// Maximum spatial complexity in the segment.
     pub max_spatial: f64,
+    /// Maximum temporal complexity in the segment.
     pub max_temporal: f64,
+    /// Combined complexity score (0-100).
     pub score: f64, // combined 0-100 complexity score
+    /// Classified scene type for the segment.
     pub scene_class: SceneClass,
 }
 
+/// Full complexity profile of a video: per-frame metrics, segment aggregates, and overall score.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
+    /// Per-frame complexity metrics.
     pub frames: Vec<FrameComplexity>,
+    /// Per-segment aggregated metrics.
     pub segments: Vec<SegmentComplexity>,
+    /// Mean spatial complexity across all frames.
     pub avg_spatial: f64,
+    /// Mean temporal complexity across all frames.
     pub avg_temporal: f64,
+    /// Overall complexity score (0-100).
     pub overall_score: f64,
 }
 
+/// Options controlling complexity analysis.
 #[derive(Debug, Clone)]
 pub struct AnalyzeOpts {
+    /// Duration of each aggregation segment.
     pub segment_duration: Duration,
+    /// Analyze every Nth frame; values <= 0 are treated as 1.
     pub subsample: i32,
 }
 
@@ -288,10 +320,14 @@ pub enum ContentType {
     Screen,
 }
 
+/// Result of screen-content detection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenContentDetection {
+    /// Detected content type (natural vs. screen).
     pub content_type: ContentType,
+    /// Confidence score for the classification (0-100).
     pub confidence: f64, // 0-100
+    /// Human-readable explanation of the decision.
     pub reason: String,
 }
 

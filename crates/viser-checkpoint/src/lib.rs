@@ -1,3 +1,9 @@
+//! Checkpoint/resume support for the `viser` video-encoding-optimizer workspace.
+//!
+//! Persists completed encoding trials to disk so multi-hour per-title analyses survive crashes
+//! and can be resumed. A SHA-256 `config_hash` of the encoding parameters invalidates stale
+//! checkpoints when the configuration changes. Writes are atomic (temp file + rename).
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -6,10 +12,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use viser_hull::Point;
 
+/// On-disk checkpoint contents: config fingerprint, source, and completed trial results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct State {
+    /// SHA-256 fingerprint of the encoding configuration (see `config_hash`).
     pub config_hash: String,
+    /// Source video path the checkpoint applies to.
     pub source: String,
+    /// Completed trials keyed by `resolution_codec_crf`.
     pub completed: HashMap<String, Point>,
 }
 
@@ -46,16 +56,19 @@ impl Checkpoint {
         Ok(Self { mu: Mutex::new(CheckpointInner { path, state, dirty: false }) })
     }
 
+    /// Returns whether a trial for the given resolution/codec/CRF has been completed.
     pub fn is_completed(&self, resolution: &str, codec: &str, crf: i32) -> bool {
         let inner = self.mu.lock().unwrap();
         inner.state.completed.contains_key(&make_key(resolution, codec, crf))
     }
 
+    /// Returns the stored result for the given resolution/codec/CRF, if completed.
     pub fn get(&self, resolution: &str, codec: &str, crf: i32) -> Option<Point> {
         let inner = self.mu.lock().unwrap();
         inner.state.completed.get(&make_key(resolution, codec, crf)).cloned()
     }
 
+    /// Records a completed trial result and atomically flushes the checkpoint to disk.
     pub fn save(
         &self,
         resolution: &str,
@@ -69,16 +82,19 @@ impl Checkpoint {
         flush_locked(&mut inner)
     }
 
+    /// Returns the number of completed trials stored in the checkpoint.
     pub fn completed_count(&self) -> usize {
         let inner = self.mu.lock().unwrap();
         inner.state.completed.len()
     }
 
+    /// Returns a copy of all completed trial results.
     pub fn all_completed(&self) -> Vec<Point> {
         let inner = self.mu.lock().unwrap();
         inner.state.completed.values().cloned().collect()
     }
 
+    /// Deletes the checkpoint file from disk.
     pub fn remove(&self) -> anyhow::Result<()> {
         let inner = self.mu.lock().unwrap();
         fs::remove_file(&inner.path)?;

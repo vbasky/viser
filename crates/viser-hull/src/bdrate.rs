@@ -44,6 +44,7 @@ pub fn bd_rate(curve_a: &[Point], curve_b: &[Point]) -> Result<f64, BdRateError>
     Ok(bdrate)
 }
 
+/// Error returned by `bd_rate` when curves are too short or have no overlapping quality range.
 #[derive(Debug, Clone)]
 pub struct BdRateError(pub String);
 

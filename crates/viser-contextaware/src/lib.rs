@@ -1,3 +1,9 @@
+//! Device-aware encoding ladder generation for the `viser` video-encoding-optimizer workspace.
+//!
+//! Runs per-title analysis tuned for each device class (Mobile, Desktop, TV, TV 4K), applying
+//! per-class resolution caps, codec preferences, and VMAF model selection. `analyze` produces a
+//! convex hull and bitrate ladder for every device `Profile`.
+
 mod profile;
 
 pub use profile::*;
@@ -11,10 +17,15 @@ use viser_ladder::{self, Ladder};
 /// Config for context-aware analysis.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Device profiles to analyze, each with its own resolution and codec constraints.
     pub profiles: Vec<Profile>,
+    /// CRF quality values to sweep across all profiles.
     pub crf_values: Vec<i32>,
+    /// Generic encoder preset name shared by all profiles.
     pub preset: String,
+    /// Frame subsample interval for VMAF scoring; 0 evaluates every frame.
     pub subsample: i32,
+    /// Number of concurrent encodes per profile analysis.
     pub parallel: i32,
 }
 
@@ -30,26 +41,40 @@ impl Default for Config {
     }
 }
 
+/// Analysis output for a single device profile.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceResult {
+    /// The device profile this result was produced for.
     pub profile: Profile,
+    /// Convex hull of quality-vs-bitrate points for the profile.
     pub hull: Hull,
+    /// Selected bitrate ladder derived from the hull.
     pub ladder: Ladder,
+    /// All evaluated encoding points.
     pub points: Vec<Point>,
+    /// Number of encode trials run for this profile.
     pub trial_count: usize,
 }
 
+/// Combined result of a context-aware analysis across all device profiles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Result {
+    /// Source video path that was analyzed.
     pub source: String,
+    /// Per-device analysis results.
     pub devices: Vec<DeviceResult>,
+    /// Total wall-clock time of the analysis.
     pub duration: Duration,
 }
 
+/// Progress update emitted as each device profile finishes.
 #[derive(Debug, Clone)]
 pub struct Progress {
+    /// Number of profiles completed so far.
     pub device_done: usize,
+    /// Total number of profiles to analyze.
     pub device_total: usize,
+    /// Name of the most recently completed profile.
     pub device_name: String,
 }
 

@@ -11,23 +11,29 @@ pub struct ProbeCache {
     engine: ProbeEngine,
 }
 
+/// Backend used to probe media files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeEngine {
+    /// Probe via the `ffprobe` binary.
     Ffprobe,
+    /// Probe via the in-process `revelo` parser (requires the `revelo` feature).
     #[cfg(feature = "revelo")]
     Revelo,
 }
 
 impl ProbeCache {
+    /// Creates an empty cache backed by the `ffprobe` engine.
     pub fn new() -> Self {
         Self { cache: Arc::default(), engine: ProbeEngine::Ffprobe }
     }
 
+    /// Creates an empty cache backed by the `revelo` engine.
     #[cfg(feature = "revelo")]
     pub fn with_revelo() -> Self {
         Self { cache: Arc::default(), engine: ProbeEngine::Revelo }
     }
 
+    /// Creates an empty cache backed by the given probe engine.
     pub fn with_engine(engine: ProbeEngine) -> Self {
         Self { cache: Arc::default(), engine }
     }

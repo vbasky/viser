@@ -1,3 +1,10 @@
+//! Per-title encoding pipeline for the `viser` video-encoding-optimizer workspace.
+//!
+//! Probes a source video, builds a trial matrix over resolutions, codecs, and CRF values,
+//! encodes them in parallel with optional checkpointing, then computes the convex hull,
+//! per-codec hulls, codec crossovers, and an optimal bitrate ladder. The entry point is
+//! `analyze`, which returns a `Result` capturing every measured point and the selected ladder.
+
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
@@ -14,13 +21,18 @@ use viser_quality::{self, MeasureOpts, Metric};
 /// Config defines the search space and parameters for per-title analysis.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
+    /// Encoding search space: resolutions, codecs, CRF values, preset, and parallelism.
     #[serde(flatten)]
     pub encoding: EncodingConfig,
+    /// Options controlling how the final bitrate ladder is selected from the hull.
     pub ladder_opts: LadderOpts,
+    /// Path for persisting/resuming trial results; empty disables checkpointing.
     #[serde(default)]
     pub checkpoint_path: String,
+    /// VMAF model name passed to the quality measurement; empty uses the default model.
     #[serde(default)]
     pub vmaf_model: String,
+    /// Allow best-effort analysis of HDR sources instead of bailing out.
     #[serde(default)]
     pub allow_hdr: bool,
 }
@@ -28,18 +40,30 @@ pub struct Config {
 /// Complete output of a per-title analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Result {
+    /// Path to the analyzed source video.
     pub source: String,
+    /// Probe metadata (streams, resolution, color info) of the source.
     pub source_info: ProbeResult,
+    /// The configuration used for this analysis.
     pub config: Config,
+    /// Every measured trial point (resolution/codec/CRF -> bitrate/quality).
     pub points: Vec<Point>,
+    /// Convex upper hull across all measured points.
     pub hull: Hull,
+    /// Per-codec convex hulls keyed by codec.
     pub per_codec: std::collections::HashMap<Codec, Hull>,
+    /// Bitrate points where the optimal codec changes along the hull.
     pub crossovers: Vec<Crossover>,
+    /// Bitrate ladder selected from the hull.
     pub ladder: Ladder,
+    /// Wall-clock duration of the full analysis.
     pub duration: Duration,
+    /// Total number of trials in the matrix (including resumed/failed).
     pub trial_count: usize,
+    /// Detected source audio bitrate in kbps, used in ladder sizing.
     #[serde(default)]
     pub audio_bitrate_kbps: f64,
+    /// Non-fatal warnings collected during analysis (e.g. failed trials, HDR notes).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
@@ -47,13 +71,21 @@ pub struct Result {
 /// Progress update for each completed trial encode.
 #[derive(Debug, Clone)]
 pub struct TrialProgress {
+    /// Number of trials completed so far.
     pub done: usize,
+    /// Total number of trials in the matrix.
     pub total: usize,
+    /// Resolution of the completed trial.
     pub resolution: Resolution,
+    /// Codec of the completed trial.
     pub codec: Codec,
+    /// CRF value of the completed trial.
     pub crf: i32,
+    /// Measured bitrate of the trial, or 0.0 on failure.
     pub bitrate: f64,
+    /// Measured VMAF of the trial, or 0.0 on failure.
     pub vmaf: f64,
+    /// Error message if the trial failed, otherwise `None`.
     pub error: Option<String>,
 }
 
@@ -354,12 +386,14 @@ pub async fn analyze(
 }
 
 impl Result {
+    /// Serializes the result to pretty-printed JSON and writes it to `path`.
     pub fn save_json(&self, path: &str) -> anyhow::Result<()> {
         let data = serde_json::to_string_pretty(self)?;
         std::fs::write(path, data)?;
         Ok(())
     }
 
+    /// Reads and deserializes a previously saved `Result` from JSON at `path`.
     pub fn load_json(path: &str) -> anyhow::Result<Self> {
         let data = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&data)?)

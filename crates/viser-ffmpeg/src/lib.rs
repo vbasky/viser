@@ -1,3 +1,9 @@
+//! FFmpeg/FFprobe wrapper for the `viser` video-encoding-optimizer workspace.
+//!
+//! Provides typed primitives (codecs, resolutions, rate-control modes) plus
+//! functions to encode (`encode`), probe media (`probe`), and resolve the
+//! `ffmpeg`/`ffprobe` binary paths. A `ProbeCache` deduplicates probe calls.
+
 mod cache;
 mod encode;
 mod path;
@@ -18,15 +24,19 @@ use std::fmt;
 /// Supported video codec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Codec {
+    /// H.264/AVC via `libx264`.
     #[serde(rename = "libx264")]
     X264,
+    /// H.265/HEVC via `libx265`.
     #[serde(rename = "libx265")]
     X265,
+    /// AV1 via `libsvtav1` (SVT-AV1).
     #[serde(rename = "libsvtav1")]
     SvtAv1,
 }
 
 impl Codec {
+    /// FFmpeg encoder name for this codec (e.g. `"libx264"`).
     pub fn as_str(&self) -> &'static str {
         match self {
             Codec::X264 => "libx264",
@@ -58,11 +68,14 @@ impl std::str::FromStr for Codec {
 /// Video resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Resolution {
+    /// Pixel width.
     pub width: i32,
+    /// Pixel height.
     pub height: i32,
 }
 
 impl Resolution {
+    /// Creates a resolution from width and height in pixels.
     pub const fn new(width: i32, height: i32) -> Self {
         Self { width, height }
     }
@@ -111,13 +124,19 @@ impl std::str::FromStr for Resolution {
     }
 }
 
-/// Common resolutions (16:9 aspect ratio).
+/// 3840x2160 (4K UHD), 16:9.
 pub const RES_2160P: Resolution = Resolution::new(3840, 2160);
+/// 2560x1440 (QHD), 16:9.
 pub const RES_1440P: Resolution = Resolution::new(2560, 1440);
+/// 1920x1080 (Full HD), 16:9.
 pub const RES_1080P: Resolution = Resolution::new(1920, 1080);
+/// 1280x720 (HD), 16:9.
 pub const RES_720P: Resolution = Resolution::new(1280, 720);
+/// 854x480 (SD), 16:9.
 pub const RES_480P: Resolution = Resolution::new(854, 480);
+/// 640x360, 16:9.
 pub const RES_360P: Resolution = Resolution::new(640, 360);
+/// 426x240, 16:9.
 pub const RES_240P: Resolution = Resolution::new(426, 240);
 
 /// Rate control mode for encoding.

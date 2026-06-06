@@ -44,9 +44,13 @@ const MIN_FFMPEG_MAJOR: u32 = 6;
 /// Parsed FFmpeg version.
 #[derive(Debug, Clone)]
 pub struct FfmpegVersion {
+    /// Path to the binary that reported this version.
     pub binary: String,
+    /// Major version number.
     pub major: u32,
+    /// Minor version number.
     pub minor: u32,
+    /// Raw version string as parsed from the binary's output.
     pub raw: String,
 }
 

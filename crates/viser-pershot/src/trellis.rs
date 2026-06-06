@@ -1,8 +1,11 @@
 use crate::{ShotResult, TrellisAssignment};
 
+/// Options for Trellis bit allocation across shots.
 #[derive(Debug, Clone)]
 pub struct TrellisOpts {
+    /// Target duration-weighted average bitrate to hit across all shots.
     pub target_bitrate: f64,
+    /// Relative tolerance for the achieved bitrate; defaults to 0.05 if <= 0.
     pub tolerance: f64,
 }
 

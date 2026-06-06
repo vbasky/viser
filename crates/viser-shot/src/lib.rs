@@ -1,3 +1,9 @@
+//! Shot/scene boundary detection for the `viser` video-encoding-optimizer workspace.
+//!
+//! Wraps FFmpeg's `scdet` filter to find scene changes in a video, merges shots
+//! shorter than a configurable minimum, and returns each shot's start/end
+//! timestamps and change score. See `detect` for the entry point.
+
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::process::Command;
@@ -6,13 +12,19 @@ use viser_ffmpeg::{ffmpeg_path, probe};
 /// A detected shot with start and end timestamps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Shot {
+    /// Zero-based shot index within the video.
     pub index: i32,
+    /// Start timestamp of the shot.
     pub start: Duration,
+    /// End timestamp of the shot.
     pub end: Duration,
+    /// Length of the shot (`end - start`).
     pub duration: Duration,
+    /// Scene-change score at this shot's starting boundary (0-100); `0` for the first shot.
     pub score: f64, // scene change score at boundary (0-100)
 }
 
+/// Parameters controlling `detect`.
 #[derive(Debug, Clone)]
 pub struct DetectOpts {
     /// Threshold for scene change detection (0-100). Lower = more sensitive.

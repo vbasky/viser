@@ -1,3 +1,10 @@
+//! Segment-level CRF adaptation for the `viser` video-encoding-optimizer workspace.
+//!
+//! Analyzes spatial/temporal complexity across the source, then for each short (typically
+//! 1-second) segment runs a closed-loop binary search over CRF, encoding and measuring VMAF
+//! until the target quality is met within tolerance. The entry point `adapt` returns
+//! per-segment CRF choices along with overall bitrate/VMAF averages and the complexity profile.
+
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -8,14 +15,23 @@ use viser_quality::{self, MeasureOpts, Metric};
 /// Config for segment-level CRF adaptation.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Target VMAF score each segment's CRF search aims to achieve.
     pub target_vmaf: f64,
+    /// Acceptable absolute VMAF deviation from the target before stopping the search.
     pub tolerance: f64,
+    /// Lowest (highest-quality) CRF the search will consider.
     pub min_crf: i32,
+    /// Highest (lowest-quality) CRF the search will consider.
     pub max_crf: i32,
+    /// Codec used for segment encodes.
     pub codec: Codec,
+    /// Output resolution; `None` keeps the source resolution.
     pub resolution: Option<Resolution>,
+    /// Encoder preset (e.g. "medium").
     pub preset: String,
+    /// Length of each adapted segment.
     pub segment_duration: Duration,
+    /// Maximum binary-search iterations per segment.
     pub max_iterations: i32,
 }
 
@@ -35,25 +51,41 @@ impl Default for Config {
     }
 }
 
+/// Adaptation result for a single segment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentResult {
+    /// Start timestamp of the segment within the source.
     pub start: Duration,
+    /// End timestamp of the segment within the source.
     pub end: Duration,
+    /// Final CRF selected for the segment.
     pub crf: i32,
+    /// Measured bitrate at the selected CRF.
     pub bitrate: f64,
+    /// Measured VMAF at the selected CRF.
     pub vmaf: f64,
+    /// Complexity score of the segment from the complexity analysis.
     pub complexity: f64,
+    /// Number of search iterations performed for the segment.
     pub iterations: i32,
 }
 
+/// Complete output of a segment-level CRF adaptation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Result {
+    /// Path to the analyzed source video.
     pub source: String,
+    /// Per-segment adaptation results in time order.
     pub segments: Vec<SegmentResult>,
+    /// Duration-weighted average bitrate across all segments.
     pub avg_bitrate: f64,
+    /// Duration-weighted average VMAF across all segments.
     pub avg_vmaf: f64,
+    /// The target VMAF the adaptation aimed for.
     pub target_vmaf: f64,
+    /// Wall-clock duration of the adaptation.
     pub duration: Duration,
+    /// Complexity profile computed for the source.
     pub complexity_profile: Profile,
 }
 

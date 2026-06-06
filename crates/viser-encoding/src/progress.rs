@@ -9,6 +9,7 @@ pub struct ProgressSender<T> {
 }
 
 impl<T> ProgressSender<T> {
+    /// Creates a sender wrapping an optional channel; `None` makes `send` a no-op.
     pub fn new(tx: Option<mpsc::Sender<T>>) -> Self {
         Self { tx, dropped: AtomicI64::new(0) }
     }
@@ -28,6 +29,7 @@ impl<T> ProgressSender<T> {
         }
     }
 
+    /// Returns the number of updates dropped so far because the channel was full.
     pub fn dropped(&self) -> i64 {
         self.dropped.load(Ordering::Relaxed)
     }

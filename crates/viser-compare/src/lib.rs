@@ -1,39 +1,66 @@
+//! Browser-based side-by-side comparison player with a VMAF quality timeline.
+//!
+//! Part of the `viser` video-encoding-optimizer workspace. Serves an interactive
+//! QA page for visual inspection of encoded videos, streaming the reference and
+//! encoded files over HTTP alongside per-frame VMAF data and detected quality dips.
+
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Options for the comparison player.
 #[derive(Debug, Clone)]
 pub struct Opts {
+    /// Path to the reference (original) video file.
     pub reference: String,
+    /// Path to the encoded video file.
     pub encoded: String,
+    /// Path to the per-frame VMAF JSON file (empty to disable the timeline).
     pub vmaf_data: String,
+    /// Preferred HTTP port; falls back to an OS-assigned port if unavailable.
     pub port: u16,
 }
 
+/// A single per-frame VMAF score.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrameVmaf {
+    /// Zero-based frame index.
     pub frame: i32,
+    /// Presentation time of the frame in seconds.
     pub time: f64,
+    /// VMAF score for the frame (0-100).
     pub vmaf: f64,
 }
 
+/// A detected quality dip — a frame whose VMAF falls notably below the average.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dip {
+    /// Zero-based frame index of the dip.
     pub frame: i32,
+    /// Presentation time of the dip in seconds.
     pub time: f64,
+    /// VMAF score at the dip.
     pub vmaf: f64,
+    /// Severity classification: `"warning"` or `"critical"`.
     pub severity: String,
 }
 
+/// Payload sent to the browser player describing the videos and quality data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerData {
+    /// URL the player fetches the reference video from.
     pub reference_url: String,
+    /// URL the player fetches the encoded video from.
     pub encoded_url: String,
+    /// Per-frame VMAF scores backing the quality timeline.
     pub frames: Vec<FrameVmaf>,
+    /// Detected quality dips, capped to the most severe entries.
     pub dips: Vec<Dip>,
+    /// Average VMAF across all frames.
     pub avg_vmaf: f64,
+    /// Minimum VMAF across all frames.
     pub min_vmaf: f64,
+    /// Maximum VMAF across all frames.
     pub max_vmaf: f64,
 }
 

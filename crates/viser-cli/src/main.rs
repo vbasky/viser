@@ -1,3 +1,11 @@
+//! `viser` command-line tool — the main entry point for the `viser`
+//! video-encoding-optimizer workspace.
+//!
+//! Dispatches subcommands for single encodes, file inspection, quality
+//! measurement (VMAF/PSNR/SSIM), the browser comparison player, and the
+//! optimization methods: per-title convex-hull analysis and delivery,
+//! per-shot refinement, per-segment adaptive CRF, and context-aware ladders.
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;

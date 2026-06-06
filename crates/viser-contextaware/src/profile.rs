@@ -4,28 +4,42 @@ use viser_ffmpeg::{
 };
 use viser_ladder::Opts as LadderOpts;
 
+/// Target device class that determines resolution caps and codec preferences.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceClass {
+    /// Smartphones and small tablets.
     Mobile,
+    /// Laptops and desktop monitors.
     Desktop,
+    /// 1080p TVs and large displays.
     Tv,
+    /// 4K (2160p) TVs.
     Tv4k,
 }
 
 /// Encoding constraints and quality targets for a device class.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
+    /// Human-readable profile name (e.g. `"Mobile"`).
     pub name: String,
+    /// Device class this profile targets.
     pub device: DeviceClass,
+    /// Description of the intended device and viewing context.
     pub description: String,
+    /// VMAF model name used for quality scoring (e.g. `"vmaf_v0.6.1"`).
     pub vmaf_model: String,
+    /// Maximum resolution allowed for this device.
     pub max_res: Resolution,
+    /// Candidate resolutions to evaluate.
     pub resolutions: Vec<Resolution>,
+    /// Codecs to encode with, in preference order.
     pub codecs: Vec<Codec>,
+    /// Ladder selection options (rung count, bitrate and VMAF bounds).
     pub ladder_opts: LadderOpts,
 }
 
+/// Returns the standard Mobile profile (capped at 720p, AV1/x264).
 pub fn mobile_profile() -> Profile {
     Profile {
         name: "Mobile".into(),
@@ -46,6 +60,7 @@ pub fn mobile_profile() -> Profile {
     }
 }
 
+/// Returns the standard Desktop profile (capped at 1080p, AV1/x265/x264).
 pub fn desktop_profile() -> Profile {
     Profile {
         name: "Desktop".into(),
@@ -59,6 +74,7 @@ pub fn desktop_profile() -> Profile {
     }
 }
 
+/// Returns the standard 1080p TV profile (8 rungs, AV1/x265/x264).
 pub fn tv_profile() -> Profile {
     Profile {
         name: "TV (1080p)".into(),
@@ -79,6 +95,7 @@ pub fn tv_profile() -> Profile {
     }
 }
 
+/// Returns the standard 4K TV profile (up to 2160p, 4K VMAF model, AV1/x265).
 pub fn tv_4k_profile() -> Profile {
     Profile {
         name: "TV (4K)".into(),
@@ -99,6 +116,7 @@ pub fn tv_4k_profile() -> Profile {
     }
 }
 
+/// Returns all standard profiles: Mobile, Desktop, TV (1080p), and TV (4K).
 pub fn all_profiles() -> Vec<Profile> {
     vec![mobile_profile(), desktop_profile(), tv_profile(), tv_4k_profile()]
 }

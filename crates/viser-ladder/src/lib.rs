@@ -1,3 +1,12 @@
+//! Bitrate ladder selection with crossover enforcement.
+//!
+//! Picks the best N rungs from a convex hull (Pareto frontier) using greedy
+//! VMAF-target selection, while enforcing resolution crossovers and bitrate/quality
+//! constraints. Also provides pre-built fixed ladders (Netflix, Apple HLS) for baseline
+//! comparison.
+//!
+//! Part of the `viser` video-encoding-optimizer workspace.
+
 mod fixed;
 
 pub use fixed::*;
@@ -9,24 +18,34 @@ use viser_hull::{Hull, Point};
 /// One level in a bitrate ladder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rung {
+    /// The hull point selected for this rung.
     #[serde(flatten)]
     pub point: Point,
+    /// Rung number, with 0 being the lowest quality.
     pub index: i32, // rung number (0 = lowest quality)
 }
 
 /// Ordered set of rungs from lowest to highest quality.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ladder {
+    /// Rungs ordered by ascending bitrate.
     pub rungs: Vec<Rung>,
 }
 
+/// Constraints and target count controlling ladder selection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Opts {
-    pub num_rungs: i32,          // target number of rungs (e.g., 6)
-    pub min_bitrate: f64,        // minimum bitrate in kbps
-    pub max_bitrate: f64,        // maximum bitrate in kbps
-    pub min_vmaf: f64,           // minimum acceptable quality
-    pub max_vmaf: f64,           // maximum quality target
+    /// Target number of rungs to select (e.g. 6).
+    pub num_rungs: i32, // target number of rungs (e.g., 6)
+    /// Minimum bitrate in kbps; candidates below this are dropped.
+    pub min_bitrate: f64, // minimum bitrate in kbps
+    /// Maximum bitrate in kbps; candidates above this (minus audio) are dropped.
+    pub max_bitrate: f64, // maximum bitrate in kbps
+    /// Minimum acceptable VMAF quality; candidates below this are dropped.
+    pub min_vmaf: f64, // minimum acceptable quality
+    /// Maximum VMAF quality target, capping the top of the target range.
+    pub max_vmaf: f64, // maximum quality target
+    /// Audio bitrate overhead (kbps) reserved within the delivery budget.
     pub audio_bitrate_kbps: f64, // audio overhead in delivery budget
 }
 
@@ -138,6 +157,7 @@ fn to_ladder(mut points: Vec<Point>) -> Ladder {
 }
 
 impl Ladder {
+    /// Returns the (lowest, highest) bitrate in kbps, or `(0.0, 0.0)` if empty.
     pub fn bitrate_range(&self) -> (f64, f64) {
         if self.rungs.is_empty() {
             return (0.0, 0.0);
@@ -145,6 +165,7 @@ impl Ladder {
         (self.rungs.first().unwrap().point.bitrate, self.rungs.last().unwrap().point.bitrate)
     }
 
+    /// Returns the (lowest, highest) VMAF quality, or `(0.0, 0.0)` if empty.
     pub fn quality_range(&self) -> (f64, f64) {
         if self.rungs.is_empty() {
             return (0.0, 0.0);
@@ -152,6 +173,9 @@ impl Ladder {
         (self.rungs.first().unwrap().point.vmaf, self.rungs.last().unwrap().point.vmaf)
     }
 
+    /// Percent bitrate savings of the top rung versus a fixed top-rung bitrate (kbps).
+    ///
+    /// Returns 0.0 if the ladder is empty or the top rung is not cheaper.
     pub fn savings(&self, fixed_bitrate: f64) -> f64 {
         if self.rungs.is_empty() || fixed_bitrate <= 0.0 {
             return 0.0;

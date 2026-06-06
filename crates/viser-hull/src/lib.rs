@@ -1,3 +1,11 @@
+//! Convex hull (Pareto frontier) and Bjontegaard Delta Rate (BD-Rate) computation.
+//!
+//! Computes the upper convex hull of rate-distortion (R-D) points and detects the
+//! bitrates at which the optimal encoding resolution changes (crossovers). Also provides
+//! BD-Rate, the standard metric for comparing the efficiency of two R-D curves.
+//!
+//! Part of the `viser` video-encoding-optimizer workspace.
+
 mod bdrate;
 
 pub use bdrate::*;
@@ -8,28 +16,40 @@ use viser_ffmpeg::{Codec, Resolution};
 /// A single encoding trial result in R-D space.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Point {
+    /// Encoding resolution of this trial.
     pub resolution: Resolution,
+    /// Codec used for this trial.
     pub codec: Codec,
+    /// Constant Rate Factor (quality/rate setting) used for the encode.
     pub crf: i32,
+    /// Measured bitrate in kbps.
     pub bitrate: f64, // kbps
-    pub vmaf: f64,    // 0-100
-    pub psnr: f64,    // dB (optional)
-    pub ssim: f64,    // 0-1 (optional)
+    /// Measured VMAF quality score (0-100).
+    pub vmaf: f64, // 0-100
+    /// Measured PSNR in dB (optional; 0 if unmeasured).
+    pub psnr: f64, // dB (optional)
+    /// Measured SSIM (0-1, optional; 0 if unmeasured).
+    pub ssim: f64, // 0-1 (optional)
 }
 
+/// Upper convex hull of R-D points, i.e. the Pareto-optimal frontier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hull {
-    /// Sorted by bitrate ascending.
+    /// Hull points, sorted by bitrate ascending.
     pub points: Vec<Point>,
 }
 
 /// Resolution transition point on the hull.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Crossover {
+    /// Resolution optimal below the crossover bitrate.
     pub from: Resolution,
+    /// Resolution optimal above the crossover bitrate.
     pub to: Resolution,
+    /// Approximate bitrate (kbps) at which the optimal resolution changes.
     pub bitrate: f64, // approximate bitrate of crossover
-    pub vmaf: f64,    // approximate quality at crossover
+    /// Approximate VMAF quality at the crossover.
+    pub vmaf: f64, // approximate quality at crossover
 }
 
 /// Computes the upper convex hull of the given R-D points.

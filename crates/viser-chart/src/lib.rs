@@ -1,3 +1,8 @@
+//! Chart generation for the `viser` video-encoding-optimizer workspace.
+//!
+//! Renders rate-distortion (R-D) curves, convex-hull visualizations, per-codec
+//! comparisons, and bitrate-ladder charts as PNG image bytes using `plotters`.
+
 use std::collections::HashMap;
 
 use plotters::prelude::*;
@@ -5,13 +10,20 @@ use viser_ffmpeg::Codec;
 use viser_hull::{Hull, Point};
 use viser_ladder::Ladder;
 
+/// Chart configuration: titles, pixel dimensions, output format, and axis bounds.
 #[derive(Debug, Clone)]
 pub struct Opts {
+    /// Main chart title; a sensible default is used when empty.
     pub title: String,
+    /// Optional second line rendered below the title.
     pub subtitle: String,
+    /// Chart width in inches (rendered at 100 DPI).
     pub width: f64,
+    /// Chart height in inches (rendered at 100 DPI).
     pub height: f64,
+    /// Output image format (currently `"png"`).
     pub format: String,
+    /// Upper bitrate-axis bound in kbps; `0.0` auto-scales from the data.
     pub max_bitrate: f64,
 }
 
@@ -312,6 +324,9 @@ pub fn save_chart(data: &[u8], path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Maps an FFmpeg encoder name to a short display label (e.g. `libx264` -> `H.264`).
+///
+/// Unknown codec strings are returned unchanged.
 pub fn short_codec_name(codec: &str) -> &str {
     match codec {
         "libx264" => "H.264",

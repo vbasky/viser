@@ -1,3 +1,11 @@
+//! Per-shot encoding with Trellis bit allocation for the `viser`
+//! video-encoding-optimizer workspace.
+//!
+//! Detects shot boundaries, runs an independent per-title analysis on each shot, then
+//! optimizes the distribution of bits across shots using a Lagrangian constant-slope
+//! search. Use `analyze` to produce per-shot hulls and `trellis_optimize` to derive the
+//! optimal per-shot encoding assignments for a target bitrate.
+
 mod trellis;
 
 pub use trellis::*;
@@ -14,8 +22,11 @@ use viser_shot::{self, DetectOpts, Shot};
 /// Config defines parameters for per-shot analysis.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Encoding search space applied to each shot's per-title analysis.
     pub encoding: viser_encoding::Config,
+    /// Shot-detection options (e.g. scene-change threshold, minimum duration).
     pub shot_opts: DetectOpts,
+    /// Ladder selection options forwarded to the per-shot analysis.
     pub ladder_opts: LadderOpts,
 }
 
@@ -27,38 +38,60 @@ impl Default for Config {
     }
 }
 
+/// Per-title analysis result for a single detected shot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShotResult {
+    /// The detected shot (boundaries and metadata).
     pub shot: Shot,
+    /// All measured trial points for this shot.
     pub points: Vec<Point>,
+    /// Convex upper hull of this shot's points.
     pub hull: Hull,
 }
 
+/// Complete output of a per-shot analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Result {
+    /// Path to the analyzed source video.
     pub source: String,
+    /// Per-shot analysis results in shot order.
     pub shots: Vec<ShotResult>,
+    /// Wall-clock duration of the full per-shot analysis.
     pub duration: Duration,
+    /// Number of detected shots.
     pub shot_count: usize,
+    /// Total number of trials across all shots.
     pub trial_count: usize,
+    /// Optional Trellis bit-allocation assignments (empty until optimized).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assignments: Vec<TrellisAssignment>,
 }
 
+/// Optimal encoding assignment for a single shot from Trellis optimization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrellisAssignment {
+    /// Index of the shot this assignment applies to.
     pub shot_index: usize,
+    /// Chosen output resolution.
     pub resolution: Resolution,
+    /// Chosen codec.
     pub codec: Codec,
+    /// Chosen CRF value.
     pub crf: i32,
+    /// Expected bitrate at this assignment.
     pub bitrate: f64,
+    /// Expected VMAF at this assignment.
     pub vmaf: f64,
 }
 
+/// Progress update emitted as each shot finishes its analysis.
 #[derive(Debug, Clone)]
 pub struct Progress {
+    /// Number of shots analyzed so far.
     pub shot_done: usize,
+    /// Total number of shots to analyze.
     pub shot_total: usize,
+    /// Index of the shot that just completed.
     pub shot_index: usize,
 }
 
