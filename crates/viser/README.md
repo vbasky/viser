@@ -1,5 +1,7 @@
 # viser
 
+![viser - Video Encoding Optimizer](https://raw.githubusercontent.com/vbasky/viser/main/docs/banner.png)
+
 **Video Encoding Optimizer** — facade crate.
 
 This crate contains no logic of its own. It re-exports each viser library crate
