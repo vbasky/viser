@@ -1,6 +1,6 @@
 [package]
 name = "viser-encoding"
-version = "0.4.1"
+version = "0.4.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,7 +17,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.4.1" }
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.4.2" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }

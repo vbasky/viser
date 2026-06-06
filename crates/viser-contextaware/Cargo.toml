@@ -1,6 +1,6 @@
 [package]
 name = "viser-contextaware"
-version = "0.4.1"
+version = "0.4.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,11 +17,11 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.4.1" }
-viser-hull = { path = "../viser-hull", version = "0.4.1" }
-viser-ladder = { path = "../viser-ladder", version = "0.4.1" }
-viser-encoding = { path = "../viser-encoding", version = "0.4.1" }
-viser-pertitle = { path = "../viser-pertitle", version = "0.4.1" }
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.4.2" }
+viser-hull = { path = "../viser-hull", version = "0.4.2" }
+viser-ladder = { path = "../viser-ladder", version = "0.4.2" }
+viser-encoding = { path = "../viser-encoding", version = "0.4.2" }
+viser-pertitle = { path = "../viser-pertitle", version = "0.4.2" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }

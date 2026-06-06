@@ -20,6 +20,11 @@ encoding profiles, segment-level CRF tuning, comparison player.
 
 ## P0 — correctness fixes (small, do first)
 
+- [x] **VMAF model validation.** Reject unknown VMAF model names at startup
+      rather than failing deep into an encode run. Known models are validated
+      against the libvmaf catalog.
+- [x] **FFmpeg version detection.** Validate minimum FFmpeg/libvmaf versions at
+      startup and surface clear errors instead of cryptic encode failures.
 - [ ] **Core algorithm tests.** Convex hull, BD-rate, Trellis allocation, and
       shot boundary detection are numerically tricky — property-based tests
       would catch regressions early.

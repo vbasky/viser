@@ -1,4 +1,21 @@
 # Changelog
+## [0.4.2] - 2026-06-06
+
+### Added
+
+- **FFmpeg version detection** — `check_ffmpeg()` and `check_ffprobe()` validate
+  that FFmpeg >= 6.0 is installed and report version info at startup (debug
+  level). Catches missing or outdated binaries before any work begins.
+- **VMAF model validation** — `validate_vmaf_model()` rejects unknown VMAF model
+  names passed via `--model`, surfacing a clear error with the list of known
+  models.
+- **STATUS.md** — project roadmap and status tracker, linked from the README.
+
+### Fixed
+
+- **Banner image URL** — crates.io now shows the viser banner (was a broken
+  relative path).
+
 ## [0.4.1] - 2026-06-03
 
 ### Changed

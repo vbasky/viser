@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use viser_encoding::clean_stale_temp_dirs;
+use viser_ffmpeg::{check_ffmpeg, check_ffprobe, validate_vmaf_model};
 
 #[derive(Parser)]
 #[command(
@@ -414,6 +415,23 @@ async fn main() -> anyhow::Result<()> {
         if cli.verbose { tracing::Level::DEBUG } else { tracing::Level::WARN };
     tracing_subscriber::fmt().with_max_level(level).with_writer(std::io::stderr).init();
 
+    // Validate FFmpeg toolchain at startup — surfaces missing/misconfigured
+    // binaries before any work begins.
+    match (check_ffmpeg(), check_ffprobe()) {
+        (Ok(ffmpeg), Ok(ffprobe)) => {
+            tracing::debug!(
+                "ffmpeg {} (major {})  ffprobe {} (major {})",
+                ffmpeg.raw,
+                ffmpeg.major,
+                ffprobe.raw,
+                ffprobe.major,
+            );
+        }
+        (Err(e), _) | (_, Err(e)) => {
+            anyhow::bail!("{e}");
+        }
+    };
+
     // Clean stale temp dirs
     clean_stale_temp_dirs(Duration::from_secs(24 * 3600));
 
@@ -595,6 +613,7 @@ async fn cmd_inspect_probe(file: &str, probe_engine: &str) -> anyhow::Result<()>
 }
 
 async fn cmd_quality_measure(args: QualityMeasureArgs) -> anyhow::Result<()> {
+    validate_vmaf_model(&args.model)?;
     let opts = viser_quality::MeasureOpts {
         metrics: vec![
             viser_quality::Metric::Vmaf,
