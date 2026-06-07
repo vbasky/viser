@@ -40,6 +40,37 @@ encoding profiles, segment-level CRF tuning, comparison player.
 
 ## P1 — highest-value features
 
+- [ ] **Metric-by-metric comparison (MSU VQMT-class report).** Run the full
+      metric suite on the same content and compare the *metrics against each
+      other* — not just rank encodes — surfacing where PSNR and the perceptual
+      metrics disagree. Most building blocks already exist; what remains is the
+      unified report and a CLI surface.
+  - [x] Per-component PSNR (Y/U/V + weighted `(6·Y + U + V) / 8`) in
+        `viser-quality`.
+  - [x] Pooling beyond the arithmetic mean — harmonic mean, p1/p5/p10, median,
+        min/max — in `viser-quality::pool` (`PooledStats` / `PoolStrategy`).
+  - [x] Metric-vs-metric correlation (Pearson, Spearman/SROCC, Kendall/KROCC)
+        and divergence flagging in `viser-metrics` (`correlation_matrix`,
+        `divergences`, `to_markdown`).
+  - [x] Full-clip SSIMULACRA2/Butteraugli by default. `frame_samples == 0`
+        (the new default) measures every frame in a single-pass batch extract;
+        `--frame-samples N` stays as the speed/accuracy knob.
+  - [x] Wire it into the CLI: `viser metrics compare -r ref enc_a enc_b … --all
+        --pool harmonic --report {csv,json,html}` — ranks each encode per metric
+        and prints the metric-vs-metric agreement on that ranking.
+  - [x] Unified per-metric report (CSV/JSON/HTML) — emitted via `--report`
+        (table to stdout, machine report to `--output` or stdout).
+- [x] **Metric coverage parity with MSU VQMT.** Broadened the `Metric` enum
+      (and the `Result`/`Pooled`/`FrameResult` structs) past VMAF/PSNR/SSIM/
+      SSIMULACRA2/Butteraugli, all wired into `metrics compare`.
+  - [x] **MS-SSIM** — multi-scale SSIM via libvmaf's `float_ms_ssim`; rides the
+        existing VMAF pass.
+  - [x] **VIF** — visual information fidelity, the mean of libvmaf's
+        `*_vif_scale0..3`; computed alongside VMAF for free.
+  - [x] **XPSNR** — perceptually-weighted PSNR `(6·Y+U+V)/8` via FFmpeg's
+        `xpsnr` filter (a separate pass; under `--all`).
+  - [x] **CAMBI** — Netflix's banding detector via libvmaf's `cambi` feature
+        (lower is better; oriented "up" in the agreement matrix).
 - [ ] **Two-pass VBR encoding.** CRF-only trial encodes today; ladders output
       CRF values but don't map to VBR bitrates for production.
 - [ ] **HDR support (proper).** PQ/HLG handling, HDR-aware VMAF models. Current
@@ -52,6 +83,38 @@ encoding profiles, segment-level CRF tuning, comparison player.
 
 ## P2 — completeness
 
+- [ ] **Differentiators beyond MSU VQMT parity.** Builds on the metric-
+      comparison work in P1, but reaches past what MSU/psy-ex/ffmpeg-quality-
+      metrics offer. Higher effort and lower certainty than the parity tiers —
+      grouped here deliberately. None of this exists yet.
+  - [~] **No-reference metrics.** `metrics no-ref` scores files with no pristine
+        source. Done: a pure-Rust, model-free signal set — sharpness (variance
+        of Laplacian), 8×8 blockiness, and Immerkær noise — in
+        `viser-quality::noref`, streamed frame-by-frame from a `gray8` pipe.
+    - [ ] **NIQE / BRISQUE proper.** These need their *published trained model
+          parameters* (NIQE's pristine MVG; BRISQUE's SVR). Deferred rather than
+          shipping numbers that match no oracle — embed the real model data or
+          shell out to a reference implementation, then differential-test it.
+  - [ ] **Faithfulness / hallucination metric (research-grade).** Distinguish
+        recovered detail from *invented* detail in AI-enhanced output — the gap
+        every existing metric is blind to (full-reference needs the missing
+        source; no-reference rewards the confident fake). No oracle, so the
+        evaluation protocol is part of the work. Candidate wedges: seed-
+        disagreement heatmaps, round-trip re-degradation consistency, frequency-
+        band attribution. This is the gatekeeper any future AI-enhancement
+        pipeline can't ship without; treat as exploratory, multi-stage.
+        Deferred deliberately: pure encoding never *adds* detail, so there is
+        nothing to hallucinate until an AI-enhancement stage exists in the
+        pipeline — premature to build against today.
+  - [ ] **Pure-Rust + WASM measurement.** Replace the libvmaf/FFmpeg/CLI shell-
+        outs with native implementations so the comparison player computes and
+        overlays metrics in the browser — client-side metric comparison no other
+        tool offers. The big lever is decode (today every metric path shells out
+        to FFmpeg); the metric *math* is increasingly pure Rust already (pooling,
+        correlation, the `noref` signals). Large effort; viser's unfair advantage
+        if landed. See the FFmpeg-independence notes below.
+  - [ ] **HDR-aware metric variants.** PQ/HLG-correct scoring across the suite;
+        depends on and extends the **HDR support (proper)** item in P1.
 - [ ] **Hardware encoder support.** NVENC, QuickSync, VideoToolbox integration
       for GPU-accelerated encodes.
 - [ ] **VP9 codec support.** Currently only H.264, H.265, and AV1.

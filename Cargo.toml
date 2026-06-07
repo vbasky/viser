@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/viser-ffmpeg",
     "crates/viser-quality",
+    "crates/viser-metrics",
     "crates/viser-hull",
     "crates/viser-ladder",
     "crates/viser-shot",

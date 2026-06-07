@@ -70,6 +70,11 @@ enum Commands {
     },
     /// Launch side-by-side video comparison player
     Compare(CompareArgs),
+    /// Metric-vs-metric comparison and analysis tools
+    Metrics {
+        #[command(subcommand)]
+        command: MetricsCommands,
+    },
 }
 
 // ── Encode ──
@@ -163,7 +168,108 @@ struct QualityMeasureArgs {
     /// Include per-frame metrics
     #[arg(long)]
     per_frame: bool,
+    /// Frames to sample for SSIMULACRA2/butteraugli (1 = single frame, frame 0)
+    #[arg(long, default_value_t = 1)]
+    frame_samples: usize,
+    /// Print a metric-vs-metric correlation matrix and the top divergent frames (implies --per-frame)
+    #[arg(long)]
+    correlate: bool,
     /// Save results as JSON
+    #[arg(short, long)]
+    output: Option<String>,
+}
+
+// ── Metrics ──
+
+#[derive(Subcommand)]
+enum MetricsCommands {
+    /// Measure several encodes against one reference and compare the metrics
+    Compare(MetricsCompareArgs),
+    /// Score files with no-reference signals (no pristine source needed)
+    #[command(alias = "noref")]
+    NoRef(MetricsNoRefArgs),
+}
+
+#[derive(Parser)]
+struct MetricsNoRefArgs {
+    /// Files to score (repeat or list)
+    #[arg(required = true, num_args = 1..)]
+    files: Vec<String>,
+    /// Analyse every Nth frame (0 or 1 = every frame)
+    #[arg(long, default_value_t = 0)]
+    stride: usize,
+    /// How to pool per-frame scores into one value per file
+    #[arg(long, value_enum, default_value = "mean")]
+    pool: PoolArg,
+    /// Machine-readable report format to emit alongside the table
+    #[arg(long, value_enum)]
+    report: Option<ReportFormat>,
+    /// Write the report here (defaults to stdout when --report is set)
+    #[arg(short, long)]
+    output: Option<String>,
+}
+
+/// Pooling strategy for reducing per-frame scores to a single value per encode.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum PoolArg {
+    Mean,
+    Harmonic,
+    P1,
+    P5,
+    P10,
+    Median,
+    Min,
+}
+
+impl From<PoolArg> for viser_quality::PoolStrategy {
+    fn from(p: PoolArg) -> Self {
+        match p {
+            PoolArg::Mean => viser_quality::PoolStrategy::Mean,
+            PoolArg::Harmonic => viser_quality::PoolStrategy::HarmonicMean,
+            PoolArg::P1 => viser_quality::PoolStrategy::P1,
+            PoolArg::P5 => viser_quality::PoolStrategy::P5,
+            PoolArg::P10 => viser_quality::PoolStrategy::P10,
+            PoolArg::Median => viser_quality::PoolStrategy::Median,
+            PoolArg::Min => viser_quality::PoolStrategy::Min,
+        }
+    }
+}
+
+/// Machine-readable report format for `metrics compare`.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum ReportFormat {
+    Csv,
+    Json,
+    Html,
+}
+
+#[derive(Parser)]
+struct MetricsCompareArgs {
+    /// Reference (original) video file
+    #[arg(short, long)]
+    reference: String,
+    /// Encoded files to compare against the reference (repeat or list)
+    #[arg(required = true, num_args = 1..)]
+    distorted: Vec<String>,
+    /// Include the slower perceptual metrics (SSIMULACRA2, butteraugli)
+    #[arg(long)]
+    all: bool,
+    /// How to pool per-frame scores into one value per encode
+    #[arg(long, value_enum, default_value = "harmonic")]
+    pool: PoolArg,
+    /// VMAF model name
+    #[arg(long, default_value = "vmaf_v0.6.1")]
+    model: String,
+    /// VMAF frame subsampling (0 = every frame)
+    #[arg(long, default_value_t = 0)]
+    subsample: i32,
+    /// SSIMULACRA2/butteraugli frames with --all: 0 = full clip (default), 1 = single frame, N = N evenly-spaced
+    #[arg(long, default_value_t = 0)]
+    frame_samples: usize,
+    /// Machine-readable report format to emit alongside the table
+    #[arg(long, value_enum)]
+    report: Option<ReportFormat>,
+    /// Write the report here (defaults to stdout when --report is set)
     #[arg(short, long)]
     output: Option<String>,
 }
@@ -479,6 +585,10 @@ async fn main() -> anyhow::Result<()> {
             ContextAwareCommands::Analyze(args) => cmd_contextaware_analyze(args).await,
         },
         Commands::Compare(args) => cmd_compare(args).await,
+        Commands::Metrics { command } => match command {
+            MetricsCommands::Compare(args) => cmd_metrics_compare(args).await,
+            MetricsCommands::NoRef(args) => cmd_metrics_noref(args).await,
+        },
     }
 }
 
@@ -622,6 +732,8 @@ async fn cmd_inspect_probe(file: &str, probe_engine: &str) -> anyhow::Result<()>
 
 async fn cmd_quality_measure(args: QualityMeasureArgs) -> anyhow::Result<()> {
     validate_vmaf_model(&args.model)?;
+    // --correlate needs per-frame series to correlate across.
+    let per_frame = args.per_frame || args.correlate;
     let opts = viser_quality::MeasureOpts {
         metrics: vec![
             viser_quality::Metric::Vmaf,
@@ -630,16 +742,29 @@ async fn cmd_quality_measure(args: QualityMeasureArgs) -> anyhow::Result<()> {
         ],
         subsample: args.subsample,
         model: args.model,
-        per_frame: args.per_frame,
+        per_frame,
+        frame_samples: args.frame_samples,
         probe_cache: None,
     };
 
     let result = viser_quality::measure(&args.reference, &args.distorted, opts).await?;
     println!("VMAF:  {:.2}", result.vmaf);
-    println!("PSNR:  {:.2} dB", result.psnr);
+    println!(
+        "PSNR:  {:.2} dB (Y {:.2}  U {:.2}  V {:.2}  avg {:.2})",
+        result.psnr, result.psnr, result.psnr_u, result.psnr_v, result.psnr_avg
+    );
     println!("SSIM:  {:.6}", result.ssim);
 
-    if args.per_frame && !result.frames.is_empty() {
+    // Distribution pooling — the worst frames matter most for perceived quality.
+    if result.pooled.vmaf.count > 0 {
+        let p = &result.pooled.vmaf;
+        println!(
+            "\nVMAF pooled:  mean {:.2}  harmonic {:.2}  p1 {:.2}  p5 {:.2}  min {:.2}",
+            p.mean, p.harmonic_mean, p.p1, p.p5, p.min
+        );
+    }
+
+    if per_frame && !result.frames.is_empty() {
         println!("\nPer-frame: {} frames measured", result.frames.len());
         let limit = result.frames.len().min(20);
         for f in &result.frames[..limit] {
@@ -653,11 +778,428 @@ async fn cmd_quality_measure(args: QualityMeasureArgs) -> anyhow::Result<()> {
         }
     }
 
+    if args.correlate {
+        let series = viser_metrics::series_from_frames(&result.frames);
+        if series.iter().all(|s| s.values.len() >= 2) {
+            let matrix = viser_metrics::correlation_matrix(&series);
+            println!("\nMetric-vs-metric correlation (Spearman / SROCC):");
+            println!("{}", matrix.to_markdown());
+
+            let divs = viser_metrics::divergences(&series);
+            let top: Vec<_> = divs.iter().take(5).filter(|d| d.spread > 0.0).collect();
+            if !top.is_empty() {
+                println!("Most divergent frames (metrics disagree most):");
+                for d in top {
+                    println!("  frame {:>6}  spread {:.3}", d.index, d.spread);
+                }
+            }
+        } else {
+            println!("\n--correlate needs at least 2 frames; none/too few measured.");
+        }
+    }
+
     if let Some(output) = args.output {
         let data = serde_json::to_string_pretty(&result)?;
         std::fs::write(&output, data)?;
         println!("\nResults saved to: {output}");
     }
+    Ok(())
+}
+
+// ── metrics compare ──
+
+/// One metric in the comparison table: how to pull it, rank it, and format it.
+struct MetricDef {
+    key: &'static str,
+    label: &'static str,
+    higher_is_better: bool,
+    decimals: usize,
+}
+
+/// The metric set to compare. The base set rides a single libvmaf pass; `--all`
+/// adds the metrics that need an extra pass (XPSNR) or per-frame CLI calls
+/// (SSIMULACRA2, butteraugli).
+fn metric_defs(all: bool) -> Vec<MetricDef> {
+    let mut defs = vec![
+        MetricDef { key: "vmaf", label: "VMAF", higher_is_better: true, decimals: 2 },
+        MetricDef { key: "psnr", label: "PSNR", higher_is_better: true, decimals: 2 },
+        MetricDef { key: "ssim", label: "SSIM", higher_is_better: true, decimals: 4 },
+        MetricDef { key: "ms_ssim", label: "MSSSIM", higher_is_better: true, decimals: 4 },
+        MetricDef { key: "vif", label: "VIF", higher_is_better: true, decimals: 4 },
+        MetricDef { key: "cambi", label: "CAMBI", higher_is_better: false, decimals: 3 },
+    ];
+    if all {
+        defs.push(MetricDef { key: "xpsnr", label: "XPSNR", higher_is_better: true, decimals: 2 });
+        defs.push(MetricDef {
+            key: "ssimulacra2",
+            label: "SSIMU2",
+            higher_is_better: true,
+            decimals: 2,
+        });
+        defs.push(MetricDef {
+            key: "butteraugli",
+            label: "BUTTER",
+            higher_is_better: false,
+            decimals: 3,
+        });
+    }
+    defs
+}
+
+/// Pooled value for one metric, falling back to the scalar headline when no
+/// per-frame distribution was collected (e.g. single-sample SSIMULACRA2).
+fn pooled_metric_value(
+    result: &viser_quality::Result,
+    key: &str,
+    pool: viser_quality::PoolStrategy,
+) -> f64 {
+    let (stats, scalar) = match key {
+        "vmaf" => (&result.pooled.vmaf, result.vmaf),
+        "psnr" => (&result.pooled.psnr, result.psnr),
+        "ssim" => (&result.pooled.ssim, result.ssim),
+        "ms_ssim" => (&result.pooled.ms_ssim, result.ms_ssim),
+        "vif" => (&result.pooled.vif, result.vif),
+        "cambi" => (&result.pooled.cambi, result.cambi),
+        "xpsnr" => (&result.pooled.xpsnr, result.xpsnr),
+        "ssimulacra2" => (&result.pooled.ssimulacra2, result.ssimulacra2),
+        "butteraugli" => (&result.pooled.butteraugli, result.butteraugli),
+        _ => return 0.0,
+    };
+    if stats.count > 0 { stats.get(pool) } else { scalar }
+}
+
+/// Basename for display, falling back to the full path.
+fn file_label(path: &str) -> String {
+    Path::new(path).file_name().and_then(|s| s.to_str()).unwrap_or(path).to_string()
+}
+
+#[derive(serde::Serialize)]
+struct CompareValue {
+    metric: String,
+    value: f64,
+}
+
+#[derive(serde::Serialize)]
+struct CompareEncode {
+    file: String,
+    label: String,
+    values: Vec<CompareValue>,
+}
+
+#[derive(serde::Serialize)]
+struct CompareBest {
+    metric: String,
+    file: String,
+    value: f64,
+}
+
+#[derive(serde::Serialize)]
+struct CompareReport {
+    reference: String,
+    pool: String,
+    metrics: Vec<String>,
+    encodes: Vec<CompareEncode>,
+    best_per_metric: Vec<CompareBest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    correlation: Option<viser_metrics::CorrelationMatrix>,
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+fn render_compare_csv(report: &CompareReport) -> String {
+    let mut out = String::from("encode");
+    for m in &report.metrics {
+        out.push(',');
+        out.push_str(m);
+    }
+    out.push('\n');
+    for e in &report.encodes {
+        out.push_str(&e.label);
+        for v in &e.values {
+            out.push_str(&format!(",{}", v.value));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn render_compare_html(report: &CompareReport) -> String {
+    let mut out = String::new();
+    out.push_str("<!doctype html><html><head><meta charset=\"utf-8\">");
+    out.push_str("<title>viser metric comparison</title>");
+    out.push_str("<style>body{font-family:system-ui,sans-serif;margin:2rem}table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:4px 10px;text-align:right}th:first-child,td:first-child{text-align:left}caption{font-weight:600;margin-bottom:.5rem}</style>");
+    out.push_str("</head><body><table><caption>");
+    out.push_str(&format!(
+        "Metric comparison (pool: {}) — reference: {}",
+        html_escape(&report.pool),
+        html_escape(&report.reference)
+    ));
+    out.push_str("</caption><thead><tr><th>encode</th>");
+    for m in &report.metrics {
+        out.push_str(&format!("<th>{}</th>", html_escape(m)));
+    }
+    out.push_str("</tr></thead><tbody>");
+    for e in &report.encodes {
+        out.push_str(&format!("<tr><td>{}</td>", html_escape(&e.label)));
+        for v in &e.values {
+            out.push_str(&format!("<td>{:.4}</td>", v.value));
+        }
+        out.push_str("</tr>");
+    }
+    out.push_str("</tbody></table></body></html>");
+    out
+}
+
+async fn cmd_metrics_compare(args: MetricsCompareArgs) -> anyhow::Result<()> {
+    validate_vmaf_model(&args.model)?;
+    let pool: viser_quality::PoolStrategy = args.pool.into();
+    let pool_name = format!("{:?}", args.pool).to_lowercase();
+    let defs = metric_defs(args.all);
+
+    let mut metrics = vec![
+        viser_quality::Metric::Vmaf,
+        viser_quality::Metric::Psnr,
+        viser_quality::Metric::Ssim,
+        viser_quality::Metric::MsSsim,
+        viser_quality::Metric::Vif,
+        viser_quality::Metric::Cambi,
+    ];
+    if args.all {
+        metrics.push(viser_quality::Metric::Xpsnr);
+        metrics.push(viser_quality::Metric::Ssimulacra2);
+        metrics.push(viser_quality::Metric::Butteraugli);
+    }
+
+    // Measure every encode against the single reference. per_frame is on so the
+    // chosen pooling strategy has a distribution to work from.
+    let mut encodes: Vec<(String, viser_quality::Result)> = Vec::new();
+    for dist in &args.distorted {
+        println!("Measuring {} ...", file_label(dist));
+        let opts = viser_quality::MeasureOpts {
+            metrics: metrics.clone(),
+            subsample: args.subsample,
+            model: args.model.clone(),
+            per_frame: true,
+            frame_samples: args.frame_samples,
+            probe_cache: None,
+        };
+        let result = viser_quality::measure(&args.reference, dist, opts).await?;
+        encodes.push((dist.clone(), result));
+    }
+
+    // ── Comparison table ──
+    println!("\nMetric comparison (pool: {pool_name})  reference: {}", file_label(&args.reference));
+    let name_w = encodes.iter().map(|(f, _)| file_label(f).len()).max().unwrap_or(6).max(6);
+    print!("  {:<name_w$}", "encode");
+    for d in &defs {
+        print!("  {:>8}", d.label);
+    }
+    println!();
+    for (file, result) in &encodes {
+        print!("  {:<name_w$}", file_label(file));
+        for d in &defs {
+            print!("  {:>8.*}", d.decimals, pooled_metric_value(result, d.key, pool));
+        }
+        println!();
+    }
+
+    // ── Best encode per metric ──
+    println!("\nBest per metric:");
+    let mut best_per_metric = Vec::new();
+    for d in &defs {
+        let mut best: Option<(usize, f64)> = None;
+        for (i, (_f, result)) in encodes.iter().enumerate() {
+            let v = pooled_metric_value(result, d.key, pool);
+            let better = match best {
+                None => true,
+                Some((_, bv)) => {
+                    if d.higher_is_better {
+                        v > bv
+                    } else {
+                        v < bv
+                    }
+                }
+            };
+            if better {
+                best = Some((i, v));
+            }
+        }
+        if let Some((i, v)) = best {
+            let file = file_label(&encodes[i].0);
+            println!("  {:<8}  {file} ({:.*})", d.label, d.decimals, v);
+            best_per_metric.push(CompareBest { metric: d.label.to_string(), file, value: v });
+        }
+    }
+
+    // ── Metric-vs-metric agreement on how they rank the encodes ──
+    let correlation = if encodes.len() >= 2 {
+        let series: Vec<viser_metrics::MetricSeries> = defs
+            .iter()
+            .map(|d| {
+                // Orient every metric "up" (negate lower-is-better metrics like
+                // CAMBI/butteraugli) so the matrix reads as agreement on which
+                // encode is better, not raw sign.
+                let values: Vec<f64> = encodes
+                    .iter()
+                    .map(|(_, r)| {
+                        let v = pooled_metric_value(r, d.key, pool);
+                        if d.higher_is_better { v } else { -v }
+                    })
+                    .collect();
+                viser_metrics::MetricSeries::new(d.label.to_lowercase(), values, true)
+            })
+            .collect();
+        let matrix = viser_metrics::correlation_matrix(&series);
+        println!("\nMetric-vs-metric agreement on encode ranking (Spearman / SROCC):");
+        println!("{}", matrix.to_markdown());
+        Some(matrix)
+    } else {
+        println!("\n(metric-vs-metric correlation needs at least 2 encodes)");
+        None
+    };
+
+    // ── Optional machine-readable report ──
+    if let Some(format) = args.report {
+        let report = CompareReport {
+            reference: args.reference.clone(),
+            pool: pool_name,
+            metrics: defs.iter().map(|d| d.label.to_string()).collect(),
+            encodes: encodes
+                .iter()
+                .map(|(file, result)| CompareEncode {
+                    file: file.clone(),
+                    label: file_label(file),
+                    values: defs
+                        .iter()
+                        .map(|d| CompareValue {
+                            metric: d.label.to_string(),
+                            value: pooled_metric_value(result, d.key, pool),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            best_per_metric,
+            correlation,
+        };
+        let rendered = match format {
+            ReportFormat::Json => serde_json::to_string_pretty(&report)?,
+            ReportFormat::Csv => render_compare_csv(&report),
+            ReportFormat::Html => render_compare_html(&report),
+        };
+        match &args.output {
+            Some(path) => {
+                std::fs::write(path, rendered)?;
+                println!("\nReport saved to: {path}");
+            }
+            None => println!("\n{rendered}"),
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_metrics_noref(args: MetricsNoRefArgs) -> anyhow::Result<()> {
+    let pool: viser_quality::PoolStrategy = args.pool.into();
+    let pool_name = format!("{:?}", args.pool).to_lowercase();
+
+    // (label, higher_is_better, decimals, accessor)
+    let cols: [(&str, bool, usize, fn(&viser_quality::NoRefResult) -> &viser_quality::PooledStats);
+        3] = [
+        ("SHARP", true, 1, |r| &r.sharpness_pooled),
+        ("BLOCK", false, 3, |r| &r.blockiness_pooled),
+        ("NOISE", false, 3, |r| &r.noise_pooled),
+    ];
+
+    let mut results: Vec<(String, viser_quality::NoRefResult)> = Vec::new();
+    for file in &args.files {
+        println!("Scoring {} ...", file_label(file));
+        let opts = viser_quality::NoRefOpts { stride: args.stride, probe_cache: None };
+        results.push((file.clone(), viser_quality::measure_noref(file, &opts).await?));
+    }
+
+    // ── Table ──
+    println!("\nNo-reference signals (pool: {pool_name})");
+    let name_w = results.iter().map(|(f, _)| file_label(f).len()).max().unwrap_or(6).max(6);
+    print!("  {:<name_w$}", "file");
+    for (label, _, _, _) in &cols {
+        print!("  {label:>8}");
+    }
+    println!();
+    for (file, r) in &results {
+        print!("  {:<name_w$}", file_label(file));
+        for (_, _, dec, get) in &cols {
+            print!("  {:>8.*}", *dec, get(r).get(pool));
+        }
+        println!();
+    }
+
+    // ── Best per signal ──
+    println!("\nBest per signal:");
+    let mut best_per_metric = Vec::new();
+    for (label, higher, dec, get) in &cols {
+        let mut best: Option<(usize, f64)> = None;
+        for (i, (_f, r)) in results.iter().enumerate() {
+            let v = get(r).get(pool);
+            let better = match best {
+                None => true,
+                Some((_, bv)) => {
+                    if *higher {
+                        v > bv
+                    } else {
+                        v < bv
+                    }
+                }
+            };
+            if better {
+                best = Some((i, v));
+            }
+        }
+        if let Some((i, v)) = best {
+            let file = file_label(&results[i].0);
+            println!("  {label:<8}  {file} ({:.*})", *dec, v);
+            best_per_metric.push(CompareBest { metric: (*label).to_string(), file, value: v });
+        }
+    }
+
+    // ── Optional report ──
+    if let Some(format) = args.report {
+        let report = CompareReport {
+            reference: String::new(),
+            pool: pool_name,
+            metrics: cols.iter().map(|(l, _, _, _)| (*l).to_string()).collect(),
+            encodes: results
+                .iter()
+                .map(|(file, r)| CompareEncode {
+                    file: file.clone(),
+                    label: file_label(file),
+                    values: cols
+                        .iter()
+                        .map(|(l, _, _, get)| CompareValue {
+                            metric: (*l).to_string(),
+                            value: get(r).get(pool),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            best_per_metric,
+            correlation: None,
+        };
+        let rendered = match format {
+            ReportFormat::Json => serde_json::to_string_pretty(&report)?,
+            ReportFormat::Csv => render_compare_csv(&report),
+            ReportFormat::Html => render_compare_html(&report),
+        };
+        match &args.output {
+            Some(path) => {
+                std::fs::write(path, rendered)?;
+                println!("\nReport saved to: {path}");
+            }
+            None => println!("\n{rendered}"),
+        }
+    }
+
     Ok(())
 }
 

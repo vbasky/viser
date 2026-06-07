@@ -1,0 +1,21 @@
+[package]
+name = "viser-metrics"
+version = "0.4.4"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metric-vs-metric correlation and divergence analysis for viser"
+keywords = ["video", "quality", "metrics", "correlation"]
+categories = ["multimedia::video", "algorithms"]
+
+[lib]
+name = "viser_metrics"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+viser-quality = { path = "../viser-quality", version = "0.4.4" }
+serde = { workspace = true }

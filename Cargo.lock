@@ -1354,6 +1354,7 @@ dependencies = [
  "viser-ffmpeg",
  "viser-hull",
  "viser-ladder",
+ "viser-metrics",
  "viser-persegment",
  "viser-pershot",
  "viser-pertitle",
@@ -1436,6 +1437,14 @@ dependencies = [
  "serde",
  "viser-ffmpeg",
  "viser-hull",
+]
+
+[[package]]
+name = "viser-metrics"
+version = "0.4.4"
+dependencies = [
+ "serde",
+ "viser-quality",
 ]
 
 [[package]]
