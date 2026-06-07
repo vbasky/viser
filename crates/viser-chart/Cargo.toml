@@ -1,6 +1,6 @@
 [package]
 name = "viser-chart"
-version = "0.4.4"
+version = "0.5.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,9 +17,9 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.4.4" }
-viser-hull = { path = "../viser-hull", version = "0.4.4" }
-viser-ladder = { path = "../viser-ladder", version = "0.4.4" }
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.5.0" }
+viser-hull = { path = "../viser-hull", version = "0.5.0" }
+viser-ladder = { path = "../viser-ladder", version = "0.5.0" }
 plotters = { version = "0.3", default-features = false, features = [
     "bitmap_backend",
     "line_series",

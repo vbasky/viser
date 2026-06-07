@@ -14,6 +14,7 @@ VERSION="${1:?Usage: $0 <version>}"
 CRATES=(
     viser-ffmpeg
     viser-quality
+    viser-metrics
     viser-hull
     viser-ladder
     viser-shot
@@ -26,12 +27,13 @@ CRATES=(
     viser-contextaware
     viser-compare
     viser-chart
+    viser
     viser-cli
 )
 
 # Pre-flight checks
-if [[ "$(git rev-parse --abbrev-ref HEAD)" != "master" ]]; then
-    echo "ERROR: Must be on master branch"
+if [[ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]]; then
+    echo "ERROR: Must be on main branch"
     exit 1
 fi
 
@@ -61,7 +63,7 @@ git commit -m "Release v$VERSION"
 git tag "v$VERSION"
 
 # Push (triggers CI binary build + GitHub Release)
-git push origin master
+git push origin main
 git push origin "v$VERSION"
 echo "==> tag pushed — CI is building binaries and creating the GitHub Release"
 

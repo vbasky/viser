@@ -133,6 +133,7 @@ jobs:
           crates=(
             viser-ffmpeg
             viser-quality
+            viser-metrics
             viser-hull
             viser-ladder
             viser-shot

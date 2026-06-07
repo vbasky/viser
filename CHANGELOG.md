@@ -1,4 +1,29 @@
 # Changelog
+## [0.5.0] - 2026-06-07
+
+### Added
+
+- **`viser-metrics` crate** — metric-vs-metric correlation (Pearson, Spearman/
+  SROCC, Kendall/KROCC) and divergence detection across aligned score series.
+- **`viser metrics compare`** — measure several encodes against one reference and
+  compare the metrics: ranked per-metric table, best-per-metric, an agreement
+  matrix, and CSV/JSON/HTML reports.
+- **`viser metrics no-ref`** — pure-Rust no-reference signals (sharpness via
+  variance of Laplacian, 8×8 blockiness, Immerkær noise) that need no reference.
+- **More metrics** — MS-SSIM, VIF, CAMBI, and XPSNR, plus per-component (Y/U/V)
+  PSNR and pooling strategies (harmonic mean, p1/p5/p10, median).
+
+### Changed
+
+- **Full-clip SSIMULACRA2/butteraugli by default** — measured over every frame
+  via a single-pass batch extract; `--frame-samples N` remains as a speed knob.
+
+### Fixed
+
+- **PSNR silently zero** — libvmaf was sent repeated `:feature=` options, so PSNR
+  was dropped whenever SSIM was also requested; features are now combined into a
+  single `|`-separated option.
+
 ## [0.4.2] - 2026-06-06
 
 ### Added
