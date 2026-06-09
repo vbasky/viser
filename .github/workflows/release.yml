@@ -102,6 +102,7 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.RELEASE_TOKEN }}
           tag_name: ${{ github.ref_name }}
           name: viser ${{ github.ref_name }}
           body_path: /tmp/release-notes.md
