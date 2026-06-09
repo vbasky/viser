@@ -94,6 +94,12 @@ jobs:
           name: coverage-lcov
           path: coverage.lcov
 
+      - name: upload to codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.lcov
+          fail_ci_if_error: false
+
       - name: doc
         env:
           RUSTDOCFLAGS: "-D warnings"
