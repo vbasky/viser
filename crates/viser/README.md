@@ -10,10 +10,10 @@ as a module so you can depend on a single `viser` crate instead of a dozen
 
 ```toml
 # everything (default)
-viser = "0.4"
+viser = "0.6"
 
 # only what you need
-viser = { version = "0.4", default-features = false, features = ["quality", "hull"] }
+viser = { version = "0.6", default-features = false, features = ["quality", "hull"] }
 ```
 
 ```rust
