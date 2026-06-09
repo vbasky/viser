@@ -22,16 +22,17 @@ pub(crate) fn has_ffmpeg() -> bool {
 }
 
 /// Returns `true` if the installed ffmpeg supports the `libvmaf` filter.
-/// Checks via `ffmpeg -h filter=libvmaf` which exits non-zero when the
-/// filter is not compiled in.
+/// Checks by parsing `ffmpeg -filters` output for `libvmaf`.
 pub(crate) fn has_libvmaf() -> bool {
-    let status = Command::new("ffmpeg")
-        .arg("-h")
-        .arg("filter=libvmaf")
-        .stdout(std::process::Stdio::null())
+    let output = Command::new("ffmpeg")
+        .arg("-filters")
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .status();
-    matches!(status, Ok(s) if s.success())
+        .output();
+    match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).contains("libvmaf"),
+        _ => false,
+    }
 }
 
 /// Generate a synthetic test video clip using ffmpeg's lavfi source.
