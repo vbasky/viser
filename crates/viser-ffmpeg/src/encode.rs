@@ -1659,7 +1659,7 @@ mod tests {
                     ..sample_job(RateControlMode::Vbr)
                 };
                 let args = build_encode_args(&job, EncodePass::Single).unwrap();
-                assert!(has_pair(&args, "-b:v", &format!("{:.0}k", target_br)),
+                assert!(has_pair(&args, "-b:v", &format!("{target_br:.0}k")),
                     "HW VBR single-pass missing -b:v: {args:?}");
             }
 
