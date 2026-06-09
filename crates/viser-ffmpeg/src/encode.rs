@@ -137,10 +137,10 @@ async fn run_ffmpeg(
             let mut lines = reader.lines();
             let mut p = Progress::default();
             while let Ok(Some(line)) = lines.next_line().await {
-                if parse_progress_line(&line, &mut p) {
-                    if let Some(ref tx) = tx {
-                        let _ = tx.try_send(p.clone());
-                    }
+                if parse_progress_line(&line, &mut p)
+                    && let Some(ref tx) = tx
+                {
+                    let _ = tx.try_send(p.clone());
                 }
             }
         });
@@ -246,13 +246,11 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
         }
     }
 
-    if let Some(ref res) = job.resolution {
-        if res.width > 0 && res.height > 0 {
-            args.extend([
-                "-vf".into(),
-                format!("scale={}:{}:flags=lanczos", res.width, res.height),
-            ]);
-        }
+    if let Some(ref res) = job.resolution
+        && res.width > 0
+        && res.height > 0
+    {
+        args.extend(["-vf".into(), format!("scale={}:{}:flags=lanczos", res.width, res.height)]);
     }
 
     args.extend(job.extra_args.iter().cloned());
@@ -1249,7 +1247,7 @@ mod tests {
     #[test]
     fn test_crf_to_qsv_quality_bounds() {
         let q0 = crf_to_qsv_quality(0);
-        assert!(q0 >= 95 && q0 <= 100); // 100 - (0*100)/51 = 100
+        assert!((95..=100).contains(&q0)); // 100 - (0*100)/51 = 100
         let q51 = crf_to_qsv_quality(51);
         assert_eq!(q51, 1); // clamped to 1
         let q100 = crf_to_qsv_quality(100);
@@ -1260,7 +1258,7 @@ mod tests {
     fn test_crf_to_qsv_quality_mid() {
         let q = crf_to_qsv_quality(25);
         // 100 - (25*100)/51 ≈ 100 - 49 = 51
-        assert!(q >= 50 && q <= 52);
+        assert!((50..=52).contains(&q));
     }
 
     #[test]
@@ -1682,7 +1680,7 @@ mod tests {
             (any::<i32>(), any::<f64>(), any::<f64>(), any::<String>()).prop_map(
                 |(crf, max_br, bufsize, preset)| {
                     let crf = crf.abs().min(63);
-                    let max_br = max_br.abs().min(100000.0).max(100.0);
+                    let max_br = max_br.abs().clamp(100.0, 100000.0);
                     EncodeJob {
                         codec: Codec::X264,
                         crf,
@@ -1701,7 +1699,7 @@ mod tests {
         fn arb_encode_job_sw_vbr() -> impl Strategy<Value = EncodeJob> {
             (any::<i32>(), any::<f64>(), any::<String>()).prop_map(|(crf, target_br, preset)| {
                 let crf = crf.abs().min(63);
-                let target_br = target_br.abs().min(100000.0).max(100.0);
+                let target_br = target_br.abs().clamp(100.0, 100000.0);
                 EncodeJob {
                     codec: Codec::X264,
                     crf,

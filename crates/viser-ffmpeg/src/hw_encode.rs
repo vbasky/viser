@@ -32,10 +32,10 @@ async fn probe_available_encoders() -> HashSet<String> {
     let mut encoders = HashSet::new();
     for line in stdout.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("V") || trimmed.starts_with("VE") {
-            if let Some(name) = trimmed.split_whitespace().nth(1) {
-                encoders.insert(name.to_string());
-            }
+        if (trimmed.starts_with("V") || trimmed.starts_with("VE"))
+            && let Some(name) = trimmed.split_whitespace().nth(1)
+        {
+            encoders.insert(name.to_string());
         }
     }
     encoders

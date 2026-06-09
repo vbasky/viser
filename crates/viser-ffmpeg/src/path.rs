@@ -9,10 +9,10 @@ use std::process::Command;
 /// 2. `bin/ffmpeg/ffmpeg` relative to the working directory
 /// 3. `"ffmpeg"` (system PATH)
 pub fn ffmpeg_path() -> String {
-    if let Ok(p) = env::var("VISER_FFMPEG") {
-        if !p.is_empty() {
-            return p;
-        }
+    if let Ok(p) = env::var("VISER_FFMPEG")
+        && !p.is_empty()
+    {
+        return p;
     }
     if let Some(p) = local_binary("ffmpeg") {
         return p;
@@ -27,10 +27,10 @@ pub fn ffmpeg_path() -> String {
 /// 2. `bin/ffmpeg/ffprobe` relative to the working directory
 /// 3. `"ffprobe"` (system PATH)
 pub fn ffprobe_path() -> String {
-    if let Ok(p) = env::var("VISER_FFPROBE") {
-        if !p.is_empty() {
-            return p;
-        }
+    if let Ok(p) = env::var("VISER_FFPROBE")
+        && !p.is_empty()
+    {
+        return p;
     }
     if let Some(p) = local_binary("ffprobe") {
         return p;

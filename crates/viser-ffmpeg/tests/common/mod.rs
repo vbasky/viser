@@ -1,8 +1,12 @@
+#![allow(dead_code)]
+// Test-support functions are shared across multiple test binaries; each
+// binary only uses a subset, so dead_code is expected.
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Returns `true` if ffmpeg and ffprobe are on PATH.
-pub fn has_ffmpeg() -> bool {
+pub(crate) fn has_ffmpeg() -> bool {
     for bin in &["ffmpeg", "ffprobe"] {
         let status = Command::new(bin)
             .arg("-version")
@@ -20,7 +24,7 @@ pub fn has_ffmpeg() -> bool {
 /// Returns `true` if the installed ffmpeg supports the `libvmaf` filter.
 /// Checks via `ffmpeg -h filter=libvmaf` which exits non-zero when the
 /// filter is not compiled in.
-pub fn has_libvmaf() -> bool {
+pub(crate) fn has_libvmaf() -> bool {
     let status = Command::new("ffmpeg")
         .arg("-h")
         .arg("filter=libvmaf")
@@ -32,7 +36,7 @@ pub fn has_libvmaf() -> bool {
 
 /// Generate a synthetic test video clip using ffmpeg's lavfi source.
 /// Returns the path to the generated file.
-pub fn generate_test_clip(
+pub(crate) fn generate_test_clip(
     dir: &Path,
     name: &str,
     size: &str,
@@ -73,7 +77,7 @@ pub fn generate_test_clip(
 
 /// Generate an HDR test clip (HEVC with PQ transfer, MP4 container).
 /// MP4 reliably exposes color metadata to ffprobe, unlike Matroska.
-pub fn generate_hdr_clip(dir: &Path) -> PathBuf {
+pub(crate) fn generate_hdr_clip(dir: &Path) -> PathBuf {
     let path = dir.join("hdr_test.mp4");
     let status = Command::new("ffmpeg")
         .args([
@@ -110,7 +114,12 @@ pub fn generate_hdr_clip(dir: &Path) -> PathBuf {
 }
 
 /// Generate a reference clip using lossless x264.
-pub fn generate_reference_clip(dir: &Path, name: &str, size: &str, duration_secs: u32) -> PathBuf {
+pub(crate) fn generate_reference_clip(
+    dir: &Path,
+    name: &str,
+    size: &str,
+    duration_secs: u32,
+) -> PathBuf {
     let path = dir.join(name);
     let status = Command::new("ffmpeg")
         .args([

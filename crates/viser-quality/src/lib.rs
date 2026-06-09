@@ -596,18 +596,18 @@ async fn measure_butteraugli(
 
         let mut score = 0.0;
         let mut parsed = false;
-        if let Ok(out) = ba_output {
-            if out.status.success() {
-                let stdout_str = String::from_utf8_lossy(&out.stdout);
-                if let Ok(s) = stdout_str.trim().parse::<f64>() {
+        if let Ok(out) = ba_output
+            && out.status.success()
+        {
+            let stdout_str = String::from_utf8_lossy(&out.stdout);
+            if let Ok(s) = stdout_str.trim().parse::<f64>() {
+                score = s;
+                parsed = true;
+            } else if let Some(last_line) = stdout_str.lines().last() {
+                // butteraugli may emit extra lines; the score is usually the last.
+                if let Ok(s) = last_line.trim().parse::<f64>() {
                     score = s;
                     parsed = true;
-                } else if let Some(last_line) = stdout_str.lines().last() {
-                    // butteraugli may emit extra lines; the score is usually the last.
-                    if let Ok(s) = last_line.trim().parse::<f64>() {
-                        score = s;
-                        parsed = true;
-                    }
                 }
             }
         }

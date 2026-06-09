@@ -30,12 +30,12 @@ fn clean_temp_dirs_in_root(root: &Path, max_age: Duration) {
         }
         let Ok(metadata) = entry.metadata() else { continue };
         let Ok(modified) = metadata.modified() else { continue };
-        if let Ok(age) = now.duration_since(modified) {
-            if age > max_age {
-                let path = entry.path();
-                debug!("cleaning stale temp dir: {}", path.display());
-                let _ = fs::remove_dir_all(&path);
-            }
+        if let Ok(age) = now.duration_since(modified)
+            && age > max_age
+        {
+            let path = entry.path();
+            debug!("cleaning stale temp dir: {}", path.display());
+            let _ = fs::remove_dir_all(&path);
         }
     }
 }

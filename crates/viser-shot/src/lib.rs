@@ -77,25 +77,25 @@ fn parse_scdet_output(output: &str) -> Vec<SceneChange> {
 
     for line in output.lines() {
         if line.starts_with("frame:") {
-            if let Some(pts_time) = extract_field(line, "pts_time:") {
-                if let Ok(seconds) = pts_time.parse::<f64>() {
-                    current_pts = Duration::from_secs_f64(seconds);
-                    has_pts = true;
-                }
+            if let Some(pts_time) = extract_field(line, "pts_time:")
+                && let Ok(seconds) = pts_time.parse::<f64>()
+            {
+                current_pts = Duration::from_secs_f64(seconds);
+                has_pts = true;
             }
             continue;
         }
 
-        if let Some(score_str) = line.strip_prefix("lavfi.scd.score=") {
-            if let Ok(score) = score_str.parse::<f64>() {
-                if score > 0.0 && has_pts {
-                    changes.push(SceneChange { pts: current_pts, score });
-                }
-            }
+        if let Some(score_str) = line.strip_prefix("lavfi.scd.score=")
+            && let Ok(score) = score_str.parse::<f64>()
+            && score > 0.0
+            && has_pts
+        {
+            changes.push(SceneChange { pts: current_pts, score });
         }
     }
 
-    changes.sort_by(|a, b| a.pts.cmp(&b.pts));
+    changes.sort_by_key(|a| a.pts);
     changes
 }
 

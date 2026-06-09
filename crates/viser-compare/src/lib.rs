@@ -84,18 +84,18 @@ pub fn load_vmaf_data(path: &str) -> anyhow::Result<Vec<FrameVmaf>> {
         vmaf: f64,
     }
 
-    if let Ok(result) = serde_json::from_slice::<QualResult>(&data) {
-        if !result.frames.is_empty() {
-            return Ok(result
-                .frames
-                .into_iter()
-                .map(|f| FrameVmaf {
-                    frame: f.frame_num,
-                    time: f.frame_num as f64 / 24.0,
-                    vmaf: f.vmaf,
-                })
-                .collect());
-        }
+    if let Ok(result) = serde_json::from_slice::<QualResult>(&data)
+        && !result.frames.is_empty()
+    {
+        return Ok(result
+            .frames
+            .into_iter()
+            .map(|f| FrameVmaf {
+                frame: f.frame_num,
+                time: f.frame_num as f64 / 24.0,
+                vmaf: f.vmaf,
+            })
+            .collect());
     }
 
     // Try libvmaf raw format
@@ -172,17 +172,17 @@ pub async fn serve(opts: Opts) -> anyhow::Result<()> {
         max_vmaf: 0.0,
     };
 
-    if !opts.vmaf_data.is_empty() {
-        if let Ok(frames) = load_vmaf_data(&opts.vmaf_data) {
-            player_data.dips = find_dips(&frames, 5.0, 10.0);
-            if !frames.is_empty() {
-                let sum: f64 = frames.iter().map(|f| f.vmaf).sum();
-                player_data.avg_vmaf = sum / frames.len() as f64;
-                player_data.min_vmaf = frames.iter().map(|f| f.vmaf).fold(100.0, f64::min);
-                player_data.max_vmaf = frames.iter().map(|f| f.vmaf).fold(0.0, f64::max);
-            }
-            player_data.frames = frames;
+    if !opts.vmaf_data.is_empty()
+        && let Ok(frames) = load_vmaf_data(&opts.vmaf_data)
+    {
+        player_data.dips = find_dips(&frames, 5.0, 10.0);
+        if !frames.is_empty() {
+            let sum: f64 = frames.iter().map(|f| f.vmaf).sum();
+            player_data.avg_vmaf = sum / frames.len() as f64;
+            player_data.min_vmaf = frames.iter().map(|f| f.vmaf).fold(100.0, f64::min);
+            player_data.max_vmaf = frames.iter().map(|f| f.vmaf).fold(0.0, f64::max);
         }
+        player_data.frames = frames;
     }
 
     let port = if opts.port == 0 { 8787 } else { opts.port };

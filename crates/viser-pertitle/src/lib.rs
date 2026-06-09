@@ -206,22 +206,22 @@ pub async fn analyze(
             let _permit = sem.acquire().await.unwrap();
 
             // Check checkpoint
-            if let Some(ref cp) = cp {
-                if let Some(p) = cp.get(&t.resolution.label(), t.codec.as_str(), t.crf) {
-                    let d = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    points.lock().await.push(p.clone());
-                    sender.send(TrialProgress {
-                        done: d,
-                        total,
-                        resolution: t.resolution,
-                        codec: t.codec,
-                        crf: t.crf,
-                        bitrate: p.bitrate,
-                        vmaf: p.vmaf,
-                        error: None,
-                    });
-                    return;
-                }
+            if let Some(ref cp) = cp
+                && let Some(p) = cp.get(&t.resolution.label(), t.codec.as_str(), t.crf)
+            {
+                let d = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                points.lock().await.push(p.clone());
+                sender.send(TrialProgress {
+                    done: d,
+                    total,
+                    resolution: t.resolution,
+                    codec: t.codec,
+                    crf: t.crf,
+                    bitrate: p.bitrate,
+                    vmaf: p.vmaf,
+                    error: None,
+                });
+                return;
             }
 
             let out_path = tmp_dir_path.join(format!(
@@ -323,10 +323,10 @@ pub async fn analyze(
                 ssim: 0.0,
             };
 
-            if let Some(ref cp) = cp {
-                if let Err(e) = cp.save(&t.resolution.label(), t.codec.as_str(), t.crf, p.clone()) {
-                    warn!("checkpoint save failed: {e}");
-                }
+            if let Some(ref cp) = cp
+                && let Err(e) = cp.save(&t.resolution.label(), t.codec.as_str(), t.crf, p.clone())
+            {
+                warn!("checkpoint save failed: {e}");
             }
 
             let d = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
