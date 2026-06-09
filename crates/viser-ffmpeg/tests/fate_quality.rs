@@ -1,6 +1,6 @@
 mod common;
 
-use common::{generate_reference_clip, has_ffmpeg};
+use common::{generate_reference_clip, has_ffmpeg, has_libvmaf};
 use viser_ffmpeg::{Codec, EncodeJob, RateControlMode, encode};
 
 /// Helper: encode at a given CRF and return the output path.
@@ -25,7 +25,7 @@ async fn encode_at_crf(input: &str, output_dir: &std::path::Path, crf: i32) -> s
 
 #[tokio::test]
 async fn fate_quality_vmaf_lossless_should_be_high() {
-    if !has_ffmpeg() {
+    if !has_ffmpeg() || !has_libvmaf() {
         return;
     }
 
@@ -54,7 +54,7 @@ async fn fate_quality_vmaf_lossless_should_be_high() {
 
 #[tokio::test]
 async fn fate_quality_vmaf_lower_crf_higher_score() {
-    if !has_ffmpeg() {
+    if !has_ffmpeg() || !has_libvmaf() {
         return;
     }
 
@@ -99,7 +99,7 @@ async fn fate_quality_vmaf_lower_crf_higher_score() {
 
 #[tokio::test]
 async fn fate_quality_psnr_is_computed() {
-    if !has_ffmpeg() {
+    if !has_ffmpeg() || !has_libvmaf() {
         return;
     }
 
@@ -127,7 +127,7 @@ async fn fate_quality_psnr_is_computed() {
 
 #[tokio::test]
 async fn fate_quality_ssim_is_computed() {
-    if !has_ffmpeg() {
+    if !has_ffmpeg() || !has_libvmaf() {
         return;
     }
 
@@ -155,7 +155,7 @@ async fn fate_quality_ssim_is_computed() {
 
 #[tokio::test]
 async fn fate_quality_per_frame_data() {
-    if !has_ffmpeg() {
+    if !has_ffmpeg() || !has_libvmaf() {
         return;
     }
 
@@ -190,7 +190,7 @@ async fn fate_quality_per_frame_data() {
 
 #[tokio::test]
 async fn fate_quality_default_metrics() {
-    if !has_ffmpeg() {
+    if !has_ffmpeg() || !has_libvmaf() {
         return;
     }
 
@@ -210,7 +210,7 @@ async fn fate_quality_default_metrics() {
 
 #[tokio::test]
 async fn fate_quality_probe_cache_reuse() {
-    if !has_ffmpeg() {
+    if !has_ffmpeg() || !has_libvmaf() {
         return;
     }
 

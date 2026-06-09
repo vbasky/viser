@@ -17,6 +17,19 @@ pub fn has_ffmpeg() -> bool {
     true
 }
 
+/// Returns `true` if the installed ffmpeg supports the `libvmaf` filter.
+/// Checks via `ffmpeg -h filter=libvmaf` which exits non-zero when the
+/// filter is not compiled in.
+pub fn has_libvmaf() -> bool {
+    let status = Command::new("ffmpeg")
+        .arg("-h")
+        .arg("filter=libvmaf")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    matches!(status, Ok(s) if s.success())
+}
+
 /// Generate a synthetic test video clip using ffmpeg's lavfi source.
 /// Returns the path to the generated file.
 pub fn generate_test_clip(
