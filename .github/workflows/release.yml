@@ -125,20 +125,7 @@ jobs:
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev cmake
 
-      - name: Check if version is already published
-        id: check
-        run: |
-          version="${VERSION#v}"
-          status=$(curl -s -o /dev/null -w "%{http_code}" "https://crates.io/api/v1/crates/viser-ffmpeg/${version}")
-          if [[ "$status" == "200" ]]; then
-            echo "already_published=true" >> "$GITHUB_OUTPUT"
-            echo "==> viser-ffmpeg ${version} already on crates.io — skipping publish"
-          else
-            echo "already_published=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Publish crates in dependency order
-        if: steps.check.outputs.already_published != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -164,10 +151,23 @@ jobs:
             viser-cli
           )
 
+          already_published() {
+            local crate="$1"
+            local v="$2"
+            local status
+            status=$(curl -s -o /dev/null -w "%{http_code}" "https://crates.io/api/v1/crates/${crate}/${v}")
+            [[ "$status" == "200" ]]
+          }
+
           publish_with_retries() {
             local crate="$1"
             local attempts=5
             local delay=20
+
+            if already_published "$crate" "$version"; then
+              echo "==> ${crate} ${version} already on crates.io — skipping"
+              return 0
+            fi
 
             for attempt in $(seq 1 "$attempts"); do
               echo "==> Publishing ${crate} ${version} (attempt ${attempt}/${attempts})"
