@@ -121,7 +121,7 @@ VideoToolbox, VAAPI, AMF — H.264/H.265).
         depends on and extends the **HDR support (proper)** item in P1.
 - [x] **Hardware encoder support.** NVENC, QuickSync, VideoToolbox, VAAPI, AMF
       integration for GPU-accelerated encodes (H.264/H.265 only — AV1 HW is
-      deferred to OxiMedia). Shipped in 0.6.0:
+      out of scope). Shipped in 0.6.0:
 
   - [x] *Runtime detection.* `ffmpeg -encoders` probed at CLI startup; available
         hardware encoders cached in a `OnceLock<HashSet<Codec>>`.
@@ -142,8 +142,8 @@ VideoToolbox, VAAPI, AMF — H.264/H.265).
   - [x] *Chart labels.* `viser-chart` maps all 10 HW encoder names to
         human-readable labels (e.g., `h264_nvenc` → `H.264 (NVENC)`).
 
-  **Scope boundary.** No AV1 hardware encoders — those belong to OxiMedia's
-  royalty-free domain. No native FFI bindings — all HW encoding goes through
+  **Scope boundary.** No AV1 hardware encoders — out of scope for viser.
+  No native FFI bindings — all HW encoding goes through
   the FFmpeg subprocess. GPU-accelerated VMAF remains deferred (libvmaf is
   CPU-only; no viable GPU path exists).
 - [ ] **VP9 codec support.** Currently only H.264, H.265, and AV1.
