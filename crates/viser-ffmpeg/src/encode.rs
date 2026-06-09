@@ -566,12 +566,151 @@ mod tests {
         }
     }
 
+    fn job_with_codec(codec: Codec, mode: RateControlMode) -> EncodeJob {
+        EncodeJob { codec, rate_control: mode, ..sample_job(mode) }
+    }
+
+    // ── Helper: find adjacent argument pair ──
+    fn has_pair(args: &[String], a: &str, b: &str) -> bool {
+        args.windows(2).any(|w| w[0] == a && w[1] == b)
+    }
+
+    fn has_arg(args: &[String], a: &str) -> bool {
+        args.iter().any(|s| s == a)
+    }
+
+    // ── Software CRF ──
     #[test]
     fn test_build_encode_args_crf_single_pass() {
         let args =
             build_encode_args(&sample_job(RateControlMode::Crf), EncodePass::Single).unwrap();
         assert!(args.windows(2).any(|w| w == ["-crf", "23"]));
         assert_eq!(args.last().unwrap(), "output.mp4");
+    }
+
+    #[test]
+    fn test_x264_crf_args() {
+        let args = build_encode_args(
+            &job_with_codec(Codec::X264, RateControlMode::Crf),
+            EncodePass::Single,
+        )
+        .unwrap();
+        assert!(has_pair(&args, "-c:v", "libx264"));
+        assert!(has_pair(&args, "-crf", "23"));
+        assert!(has_pair(&args, "-preset", "medium"));
+    }
+
+    #[test]
+    fn test_x265_crf_args() {
+        let args = build_encode_args(
+            &job_with_codec(Codec::X265, RateControlMode::Crf),
+            EncodePass::Single,
+        )
+        .unwrap();
+        assert!(has_pair(&args, "-c:v", "libx265"));
+        assert!(has_pair(&args, "-crf", "23"));
+    }
+
+    #[test]
+    fn test_svtav1_crf_args() {
+        let args = build_encode_args(
+            &job_with_codec(Codec::SvtAv1, RateControlMode::Crf),
+            EncodePass::Single,
+        )
+        .unwrap();
+        assert!(has_pair(&args, "-c:v", "libsvtav1"));
+        assert!(has_pair(&args, "-crf", "23"));
+    }
+
+    // ── Software QP ──
+    #[test]
+    fn test_x264_qp_args() {
+        let args = build_encode_args(
+            &job_with_codec(Codec::X264, RateControlMode::Qp),
+            EncodePass::Single,
+        )
+        .unwrap();
+        assert!(has_pair(&args, "-qp", "23"));
+        assert!(!has_arg(&args, "-crf"));
+    }
+
+    #[test]
+    fn test_x265_qp_args() {
+        let args = build_encode_args(
+            &job_with_codec(Codec::X265, RateControlMode::Qp),
+            EncodePass::Single,
+        )
+        .unwrap();
+        assert!(has_pair(&args, "-qp", "23"));
+    }
+
+    #[test]
+    fn test_svtav1_qp_adds_adaptive_quantization_off() {
+        let args = build_encode_args(
+            &job_with_codec(Codec::SvtAv1, RateControlMode::Qp),
+            EncodePass::Single,
+        )
+        .unwrap();
+        assert!(has_pair(&args, "-qp", "23"));
+        assert!(has_pair(&args, "-svtav1-params", "enable-adaptive-quantization=0"));
+    }
+
+    // ── Software Capped CRF ──
+    #[test]
+    fn test_build_encode_args_capped_crf_sets_vbv() {
+        let args =
+            build_encode_args(&sample_job(RateControlMode::CappedCrf), EncodePass::Single).unwrap();
+        assert!(args.windows(2).any(|w| w == ["-crf", "23"]));
+        assert!(args.windows(2).any(|w| w == ["-maxrate", "3000k"]));
+        assert!(args.windows(2).any(|w| w == ["-bufsize", "6000k"]));
+    }
+
+    #[test]
+    fn test_capped_crf_max_bitrate_zero_errors() {
+        let job = EncodeJob {
+            max_bitrate: 0.0,
+            rate_control: RateControlMode::CappedCrf,
+            ..sample_job(RateControlMode::CappedCrf)
+        };
+        assert!(build_encode_args(&job, EncodePass::Single).is_err());
+    }
+
+    #[test]
+    fn test_capped_crf_max_bitrate_negative_errors() {
+        let job = EncodeJob {
+            max_bitrate: -1.0,
+            rate_control: RateControlMode::CappedCrf,
+            ..sample_job(RateControlMode::CappedCrf)
+        };
+        assert!(build_encode_args(&job, EncodePass::Single).is_err());
+    }
+
+    #[test]
+    fn test_capped_crf_auto_bufsize_when_zero() {
+        let job = EncodeJob {
+            max_bitrate: 4000.0,
+            bufsize: 0.0,
+            rate_control: RateControlMode::CappedCrf,
+            ..sample_job(RateControlMode::CappedCrf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-bufsize", "8000k"));
+    }
+
+    // ── Software VBR ──
+    #[test]
+    fn test_vbr_target_bitrate_zero_errors() {
+        let job = EncodeJob {
+            target_bitrate: 0.0,
+            rate_control: RateControlMode::Vbr,
+            ..sample_job(RateControlMode::Vbr)
+        };
+        assert!(build_encode_args(&job, EncodePass::First(Path::new("passlog"))).is_err());
+    }
+
+    #[test]
+    fn test_vbr_single_pass_errors() {
+        assert!(build_encode_args(&sample_job(RateControlMode::Vbr), EncodePass::Single).is_err());
     }
 
     #[test]
@@ -594,11 +733,986 @@ mod tests {
     }
 
     #[test]
-    fn test_build_encode_args_capped_crf_sets_vbv() {
+    fn test_vbr_first_pass_no_progress_args() {
+        let job = sample_job(RateControlMode::Vbr);
+        let passlog = Path::new("/tmp/viser-passlog");
+        let args = build_encode_args(&job, EncodePass::First(passlog)).unwrap();
+        assert!(!has_arg(&args, "-progress"));
+        assert!(!has_arg(&args, "-nostats"));
+    }
+
+    #[test]
+    fn test_vbr_second_pass_sets_bitrate_and_vbv() {
+        let job = sample_job(RateControlMode::Vbr);
+        let passlog = Path::new("/tmp/viser-passlog");
+        let args = build_encode_args(&job, EncodePass::Second(passlog)).unwrap();
+        assert!(has_pair(&args, "-b:v", "2500k"));
+        assert!(has_pair(&args, "-maxrate", "5000k"));
+        assert!(has_pair(&args, "-bufsize", "10000k"));
+    }
+
+    #[test]
+    fn test_vbr_sets_passlog() {
+        let job = sample_job(RateControlMode::Vbr);
+        let passlog = Path::new("/tmp/viser-passlog");
+        let args = build_encode_args(&job, EncodePass::First(passlog)).unwrap();
+        assert!(has_arg(&args, "/tmp/viser-passlog"));
+    }
+
+    // ── Resolution scaling ──
+    #[test]
+    fn test_resolution_scaling_adds_vf() {
         let args =
-            build_encode_args(&sample_job(RateControlMode::CappedCrf), EncodePass::Single).unwrap();
-        assert!(args.windows(2).any(|w| w == ["-crf", "23"]));
-        assert!(args.windows(2).any(|w| w == ["-maxrate", "3000k"]));
-        assert!(args.windows(2).any(|w| w == ["-bufsize", "6000k"]));
+            build_encode_args(&sample_job(RateControlMode::Crf), EncodePass::Single).unwrap();
+        assert!(has_arg(&args, "-vf"));
+        assert!(has_arg(&args, "scale=1280:720:flags=lanczos"));
+    }
+
+    #[test]
+    fn test_zero_width_skips_scale() {
+        let job = EncodeJob {
+            resolution: Some(crate::Resolution::new(0, 720)),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(!has_arg(&args, "-vf"));
+    }
+
+    #[test]
+    fn test_zero_height_skips_scale() {
+        let job = EncodeJob {
+            resolution: Some(crate::Resolution::new(1280, 0)),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(!has_arg(&args, "-vf"));
+    }
+
+    #[test]
+    fn test_no_resolution_skips_scale() {
+        let job = EncodeJob { resolution: None, ..sample_job(RateControlMode::Crf) };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(!has_arg(&args, "-vf"));
+    }
+
+    #[test]
+    fn test_resolution_negative_skip_scale() {
+        let job = EncodeJob {
+            resolution: Some(crate::Resolution::new(-1, -1)),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(!has_arg(&args, "-vf"));
+    }
+
+    // ── Preset handling ──
+    #[test]
+    fn test_empty_preset_no_preset_arg() {
+        let job = EncodeJob { preset: String::new(), ..sample_job(RateControlMode::Crf) };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(!has_arg(&args, "-preset"));
+    }
+
+    #[test]
+    fn test_preset_with_x264() {
+        let job = EncodeJob {
+            codec: Codec::X264,
+            preset: "fast".into(),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-preset", "fast"));
+    }
+
+    // ── Extra args ──
+    #[test]
+    fn test_extra_args_appended_before_output() {
+        let job = EncodeJob {
+            extra_args: vec!["-g".into(), "30".into(), "-bf".into(), "2".into()],
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-g", "30"));
+        assert!(has_pair(&args, "-bf", "2"));
+        assert_eq!(args.last().unwrap(), "output.mp4");
+    }
+
+    // ── Null output path ──
+    #[test]
+    fn test_null_output_path_is_platform_appropriate() {
+        let null = null_output_path();
+        assert!(!null.is_empty());
+        assert!(null == "/dev/null" || null == "NUL");
+    }
+
+    // ── Progress parsing ──
+    #[test]
+    fn test_parse_progress_line_frame() {
+        let mut p = Progress::default();
+        assert!(!parse_progress_line("frame=100", &mut p));
+        assert_eq!(p.frame, 100);
+    }
+
+    #[test]
+    fn test_parse_progress_line_fps() {
+        let mut p = Progress::default();
+        parse_progress_line("fps=23.976", &mut p);
+        assert!((p.fps - 23.976).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_parse_progress_line_bitrate() {
+        let mut p = Progress::default();
+        parse_progress_line("bitrate=1500.5kbits/s", &mut p);
+        assert!((p.bitrate - 1500.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_parse_progress_line_speed() {
+        let mut p = Progress::default();
+        parse_progress_line("speed=1.5x", &mut p);
+        assert!((p.speed - 1.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_parse_progress_line_out_time_us() {
+        let mut p = Progress::default();
+        parse_progress_line("out_time_us=1234567", &mut p);
+        assert_eq!(p.time, Duration::from_micros(1234567));
+    }
+
+    #[test]
+    fn test_parse_progress_returns_true_on_progress() {
+        let mut p = Progress::default();
+        assert!(parse_progress_line("progress=continue", &mut p));
+    }
+
+    #[test]
+    fn test_parse_progress_full_block() {
+        let mut p = Progress::default();
+        parse_progress_line("frame=1500", &mut p);
+        parse_progress_line("fps=25.0", &mut p);
+        parse_progress_line("bitrate=2000.0kbits/s", &mut p);
+        parse_progress_line("speed=2.0x", &mut p);
+        parse_progress_line("out_time_us=60000000", &mut p);
+        assert!(parse_progress_line("progress=continue", &mut p));
+        assert_eq!(p.frame, 1500);
+        assert_eq!(p.time, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_parse_progress_line_missing_equals() {
+        let mut p = Progress::default();
+        assert!(!parse_progress_line("noequals", &mut p));
+    }
+
+    #[test]
+    fn test_parse_progress_line_unknown_key() {
+        let mut p = Progress::default();
+        assert!(!parse_progress_line("unknown=42", &mut p));
+    }
+
+    #[test]
+    fn test_parse_progress_line_bogus_numbers() {
+        let mut p = Progress::default();
+        parse_progress_line("frame=abc", &mut p);
+        assert_eq!(p.frame, 0);
+    }
+
+    // ── Make passlog prefix ──
+    #[test]
+    fn test_make_passlog_prefix_uses_output_dir() {
+        let prefix = make_passlog_prefix("/path/to/video.mp4");
+        assert!(prefix.starts_with(Path::new("/path/to")));
+        assert!(prefix.to_string_lossy().contains("video"));
+    }
+
+    #[test]
+    fn test_make_passlog_prefix_no_parent_falls_back_to_cwd() {
+        let prefix = make_passlog_prefix("video.mp4");
+        assert!(prefix.starts_with(Path::new(".")));
+    }
+
+    // ── Make concat list path ──
+    #[test]
+    fn test_make_concat_list_path_is_txt() {
+        let path = make_concat_list_path("output.mp4");
+        assert!(path.to_string_lossy().ends_with(".txt"));
+    }
+
+    // ── Helper: hardware-specific job builders ──
+    fn hw_crf(codec: Codec) -> EncodeJob {
+        EncodeJob {
+            codec,
+            preset: String::new(),
+            resolution: None,
+            extra_args: vec![],
+            ..sample_job(RateControlMode::Crf)
+        }
+    }
+
+    fn hw_qp(codec: Codec) -> EncodeJob {
+        EncodeJob {
+            codec,
+            preset: String::new(),
+            resolution: None,
+            extra_args: vec![],
+            ..sample_job(RateControlMode::Qp)
+        }
+    }
+
+    // ── Hardware encoder CRF (quality-based constant mode) ──
+    #[test]
+    fn test_nvenc_h264_crf_uses_constqp() {
+        let args = build_encode_args(&hw_crf(Codec::NvencH264), EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-rc", "constqp"));
+        assert!(has_arg(&args, "-cq"));
+    }
+
+    #[test]
+    fn test_nvenc_h265_crf_uses_constqp() {
+        let args = build_encode_args(&hw_crf(Codec::NvencH265), EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-rc", "constqp"));
+        assert!(has_arg(&args, "-cq"));
+    }
+
+    #[test]
+    fn test_qsv_h264_crf_uses_global_quality() {
+        let args = build_encode_args(&hw_crf(Codec::QsvH264), EncodePass::Single).unwrap();
+        assert!(has_arg(&args, "-global_quality"));
+    }
+
+    #[test]
+    fn test_qsv_h265_crf_uses_global_quality() {
+        let args = build_encode_args(&hw_crf(Codec::QsvH265), EncodePass::Single).unwrap();
+        assert!(has_arg(&args, "-global_quality"));
+    }
+
+    #[test]
+    fn test_vt_h264_crf_uses_quality() {
+        let args = build_encode_args(&hw_crf(Codec::VideoToolboxH264), EncodePass::Single).unwrap();
+        assert!(has_arg(&args, "-quality"));
+    }
+
+    #[test]
+    fn test_vt_h265_crf_uses_quality() {
+        let args = build_encode_args(&hw_crf(Codec::VideoToolboxH265), EncodePass::Single).unwrap();
+        assert!(has_arg(&args, "-quality"));
+    }
+
+    #[test]
+    fn test_vaapi_h264_crf_uses_global_quality() {
+        let args = build_encode_args(&hw_crf(Codec::VaapiH264), EncodePass::Single).unwrap();
+        assert!(has_arg(&args, "-global_quality"));
+    }
+
+    #[test]
+    fn test_vaapi_h265_crf_uses_global_quality() {
+        let args = build_encode_args(&hw_crf(Codec::VaapiH265), EncodePass::Single).unwrap();
+        assert!(has_arg(&args, "-global_quality"));
+    }
+
+    #[test]
+    fn test_amf_h264_crf_uses_qp_and_usage() {
+        let args = build_encode_args(&hw_crf(Codec::AmfH264), EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-qp_i", "23"));
+        assert!(has_pair(&args, "-qp_p", "25"));
+        assert!(has_pair(&args, "-usage", "transcoding"));
+    }
+
+    #[test]
+    fn test_amf_h265_crf_uses_qp_and_usage() {
+        let args = build_encode_args(&hw_crf(Codec::AmfH265), EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-qp_i", "23"));
+        assert!(has_pair(&args, "-qp_p", "25"));
+        assert!(has_pair(&args, "-usage", "transcoding"));
+    }
+
+    // ── Hardware encoder QP ──
+    #[test]
+    fn test_nvenc_h264_qp() {
+        let args = build_encode_args(&hw_qp(Codec::NvencH264), EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-qp", "23"));
+    }
+
+    #[test]
+    fn test_qsv_h264_qp() {
+        let args = build_encode_args(&hw_qp(Codec::QsvH264), EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-qp", "23"));
+    }
+
+    #[test]
+    fn test_vaapi_h264_qp() {
+        let args = build_encode_args(&hw_qp(Codec::VaapiH264), EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-qp", "23"));
+    }
+
+    #[test]
+    fn test_amf_h264_qp() {
+        let args = build_encode_args(&hw_qp(Codec::AmfH264), EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-qp", "23"));
+    }
+
+    #[test]
+    fn test_vt_qp_rejected() {
+        let result = build_encode_args(&hw_qp(Codec::VideoToolboxH264), EncodePass::Single);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vt_h265_qp_rejected() {
+        let result = build_encode_args(&hw_qp(Codec::VideoToolboxH265), EncodePass::Single);
+        assert!(result.is_err());
+    }
+
+    // ── Hardware encoder capped CRF ──
+    #[test]
+    fn test_nvenc_capped_crf_sets_vbv() {
+        let job = EncodeJob {
+            codec: Codec::NvencH264,
+            max_bitrate: 5000.0,
+            bufsize: 10000.0,
+            rate_control: RateControlMode::CappedCrf,
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-rc", "constqp"));
+        assert!(has_pair(&args, "-maxrate", "5000k"));
+        assert!(has_pair(&args, "-bufsize", "10000k"));
+    }
+
+    #[test]
+    fn test_hw_capped_crf_max_bitrate_zero_errors() {
+        let job = EncodeJob {
+            codec: Codec::NvencH264,
+            max_bitrate: 0.0,
+            rate_control: RateControlMode::CappedCrf,
+            ..sample_job(RateControlMode::Crf)
+        };
+        assert!(build_encode_args(&job, EncodePass::Single).is_err());
+    }
+
+    // ── Hardware encoder VBR ──
+    #[test]
+    fn test_nvenc_vbr_uses_vbr_hq() {
+        let job = EncodeJob {
+            codec: Codec::NvencH264,
+            target_bitrate: 5000.0,
+            rate_control: RateControlMode::Vbr,
+            ..sample_job(RateControlMode::Vbr)
+        };
+        let passlog = Path::new("/tmp/plog");
+        let args = build_encode_args(&job, EncodePass::Second(passlog)).unwrap();
+        assert!(has_pair(&args, "-rc", "vbr_hq"));
+    }
+
+    #[test]
+    fn test_qsv_vbr_no_special_rc() {
+        let job = EncodeJob {
+            codec: Codec::QsvH264,
+            target_bitrate: 5000.0,
+            rate_control: RateControlMode::Vbr,
+            ..sample_job(RateControlMode::Vbr)
+        };
+        let passlog = Path::new("/tmp/plog");
+        let args = build_encode_args(&job, EncodePass::Second(passlog)).unwrap();
+        assert!(!has_arg(&args, "-rc"));
+    }
+
+    #[test]
+    fn test_hw_vbr_target_bitrate_zero_errors() {
+        let job = EncodeJob {
+            codec: Codec::NvencH264,
+            target_bitrate: 0.0,
+            rate_control: RateControlMode::Vbr,
+            ..sample_job(RateControlMode::Vbr)
+        };
+        let passlog = Path::new("/tmp/plog");
+        assert!(build_encode_args(&job, EncodePass::Second(passlog)).is_err());
+    }
+
+    // ── Hardware preset mappings ──
+    #[test]
+    fn test_nvenc_preset_maps_to_p_numbers() {
+        let job = EncodeJob {
+            codec: Codec::NvencH264,
+            preset: "veryfast".into(),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-preset", "p2"));
+    }
+
+    #[test]
+    fn test_vaapi_preset_uses_compression_level() {
+        let job = EncodeJob {
+            codec: Codec::VaapiH264,
+            preset: "medium".into(),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-compression_level", "3"));
+    }
+
+    #[test]
+    fn test_amf_preset_uses_quality() {
+        let job = EncodeJob {
+            codec: Codec::AmfH264,
+            preset: "slow".into(),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-quality", "quality"));
+    }
+
+    #[test]
+    fn test_amf_preset_speed() {
+        let job = EncodeJob {
+            codec: Codec::AmfH264,
+            preset: "ultrafast".into(),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-quality", "speed"));
+    }
+
+    #[test]
+    fn test_amf_preset_balanced() {
+        let job = EncodeJob {
+            codec: Codec::AmfH264,
+            preset: "fast".into(),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-quality", "balanced"));
+    }
+
+    #[test]
+    fn test_vt_preset_realtime_for_ultrafast() {
+        let job = EncodeJob {
+            codec: Codec::VideoToolboxH264,
+            preset: "ultrafast".into(),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-realtime", "1"));
+    }
+
+    #[test]
+    fn test_vt_preset_realtime_for_veryfast() {
+        let job = EncodeJob {
+            codec: Codec::VideoToolboxH264,
+            preset: "veryfast".into(),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-realtime", "1"));
+    }
+
+    #[test]
+    fn test_vt_preset_no_realtime_for_slow() {
+        let job = EncodeJob {
+            codec: Codec::VideoToolboxH264,
+            preset: "slow".into(),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(!has_arg(&args, "-realtime"));
+    }
+
+    #[test]
+    fn test_qsv_preset_passthrough() {
+        let job = EncodeJob {
+            codec: Codec::QsvH264,
+            preset: "medium".into(),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-preset", "medium"));
+    }
+
+    // ── CRF-to-HW quality conversion ──
+    #[test]
+    fn test_crf_to_nvenc_cq_bounds() {
+        assert_eq!(crf_to_nvenc_cq(0), 1); // clamped to 1
+        assert_eq!(crf_to_nvenc_cq(51), 41); // (51*51)/63 ≈ 41
+        assert_eq!(crf_to_nvenc_cq(63), 51); // (63*51)/63 = 51
+        assert_eq!(crf_to_nvenc_cq(100), 51); // clamped to 51
+    }
+
+    #[test]
+    fn test_crf_to_nvenc_cq_typical_values() {
+        assert_eq!(crf_to_nvenc_cq(23), 18); // (23*51)/63 ≈ 18.6 → 18
+        assert_eq!(crf_to_nvenc_cq(30), 24); // (30*51)/63 ≈ 24.2 → 24
+    }
+
+    #[test]
+    fn test_crf_to_qsv_quality_bounds() {
+        let q0 = crf_to_qsv_quality(0);
+        assert!(q0 >= 95 && q0 <= 100); // 100 - (0*100)/51 = 100
+        let q51 = crf_to_qsv_quality(51);
+        assert_eq!(q51, 1); // clamped to 1
+        let q100 = crf_to_qsv_quality(100);
+        assert_eq!(q100, 1); // clamped at bottom
+    }
+
+    #[test]
+    fn test_crf_to_qsv_quality_mid() {
+        let q = crf_to_qsv_quality(25);
+        // 100 - (25*100)/51 ≈ 100 - 49 = 51
+        assert!(q >= 50 && q <= 52);
+    }
+
+    #[test]
+    fn test_crf_to_vt_quality_bounds() {
+        assert!((crf_to_vt_quality(0) - 1.0).abs() < 1e-9);
+        assert!((crf_to_vt_quality(51) - 0.0).abs() < 1e-9);
+        assert!((crf_to_vt_quality(100) - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_crf_to_vt_quality_mid() {
+        let q = crf_to_vt_quality(25);
+        assert!(q > 0.4 && q < 0.6);
+    }
+
+    // ── Specific CRF value edge cases ──
+    #[test]
+    fn test_crf_zero() {
+        let job = EncodeJob { crf: 0, ..sample_job(RateControlMode::Crf) };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-crf", "0"));
+    }
+
+    #[test]
+    fn test_crf_high_value() {
+        let job = EncodeJob { crf: 51, ..sample_job(RateControlMode::Crf) };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-crf", "51"));
+    }
+
+    #[test]
+    fn test_crf_negative_allowed() {
+        let job = EncodeJob { crf: -1, ..sample_job(RateControlMode::Crf) };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-crf", "-1"));
+    }
+
+    #[test]
+    fn test_input_arg_is_present() {
+        let args =
+            build_encode_args(&sample_job(RateControlMode::Crf), EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-i", "input.mp4"));
+    }
+
+    #[test]
+    fn test_no_audio_flag_is_present() {
+        let args =
+            build_encode_args(&sample_job(RateControlMode::Crf), EncodePass::Single).unwrap();
+        assert!(has_arg(&args, "-an"));
+    }
+
+    // ── All software codecs + modes use correct codec string ──
+    #[test]
+    fn test_all_sw_codecs_have_correct_codec_string() {
+        for codec in &[Codec::X264, Codec::X265, Codec::SvtAv1] {
+            let job = EncodeJob {
+                codec: *codec,
+                preset: String::new(),
+                resolution: None,
+                extra_args: vec![],
+                ..sample_job(RateControlMode::Crf)
+            };
+            let args = build_encode_args(&job, EncodePass::Single).unwrap();
+            assert!(has_pair(&args, "-c:v", codec.as_str()), "expected -c:v {}", codec.as_str());
+        }
+    }
+
+    #[test]
+    fn test_all_hw_codecs_have_correct_codec_string() {
+        for codec in &[
+            Codec::NvencH264,
+            Codec::NvencH265,
+            Codec::QsvH264,
+            Codec::QsvH265,
+            Codec::VideoToolboxH264,
+            Codec::VideoToolboxH265,
+            Codec::VaapiH264,
+            Codec::VaapiH265,
+            Codec::AmfH264,
+            Codec::AmfH265,
+        ] {
+            let job = EncodeJob {
+                codec: *codec,
+                preset: String::new(),
+                resolution: None,
+                extra_args: vec![],
+                ..sample_job(RateControlMode::Crf)
+            };
+            let args = build_encode_args(&job, EncodePass::Single).unwrap();
+            assert!(has_pair(&args, "-c:v", codec.as_str()), "expected -c:v {}", codec.as_str());
+        }
+    }
+
+    // ── Property-based: verify against FFmpeg encoder documentation ──
+    #[cfg(test)]
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn arb_codec() -> impl Strategy<Value = Codec> {
+            prop_oneof![
+                Just(Codec::X264),
+                Just(Codec::X265),
+                Just(Codec::SvtAv1),
+                Just(Codec::NvencH264),
+                Just(Codec::NvencH265),
+                Just(Codec::QsvH264),
+                Just(Codec::QsvH265),
+                Just(Codec::VideoToolboxH264),
+                Just(Codec::VideoToolboxH265),
+                Just(Codec::VaapiH264),
+                Just(Codec::VaapiH265),
+                Just(Codec::AmfH264),
+                Just(Codec::AmfH265),
+            ]
+        }
+
+        fn arb_rate_control() -> impl Strategy<Value = RateControlMode> {
+            prop_oneof![
+                Just(RateControlMode::Crf),
+                Just(RateControlMode::Qp),
+                Just(RateControlMode::CappedCrf),
+            ]
+        }
+
+        fn arb_encode_job() -> impl Strategy<Value = EncodeJob> {
+            (
+                arb_codec(),
+                arb_rate_control(),
+                any::<i32>(),
+                any::<f64>(),
+                any::<f64>(),
+                any::<f64>(),
+                any::<String>(),
+            )
+                .prop_map(|(codec, rc, crf, target_br, max_br, bufsize, preset)| {
+                    let crf = crf.abs().min(63);
+                    EncodeJob {
+                        input: "input.mp4".into(),
+                        output: "output.mp4".into(),
+                        resolution: Some(Resolution::new(1920, 1080)),
+                        codec,
+                        crf,
+                        rate_control: rc,
+                        target_bitrate: target_br.abs().min(100000.0),
+                        max_bitrate: max_br.abs().min(100000.0),
+                        bufsize: bufsize.abs().min(200000.0),
+                        preset,
+                        extra_args: vec![],
+                    }
+                })
+        }
+
+        proptest! {
+            /// Invariant: every arg list starts with -y -i <input>
+            #[test]
+            fn args_start_with_overwrite_and_input(job in arb_encode_job()) {
+                if let Ok(args) = build_encode_args(&job, EncodePass::Single) {
+                    assert!(args.len() >= 3, "too few args: {args:?}");
+                    assert_eq!(args[0], "-y", "first arg must be -y");
+                    assert_eq!(args[1], "-i", "second arg must be -i");
+                    assert_eq!(args[2], "input.mp4", "third arg must be input path");
+                }
+            }
+
+            /// Invariant: -an (no audio) present in single pass.
+            #[test]
+            fn args_have_no_audio_flag(job in arb_encode_job()) {
+                if let Ok(args) = build_encode_args(&job, EncodePass::Single) {
+                    assert!(has_arg(&args, "-an"),
+                        "missing -an: {args:?}");
+                }
+            }
+
+            /// Invariant: -c:v <codec> present and matches the job codec.
+            #[test]
+            fn args_have_correct_codec(job in arb_encode_job()) {
+                if let Ok(args) = build_encode_args(&job, EncodePass::Single) {
+                    assert!(has_pair(&args, "-c:v", job.codec.as_str()),
+                        "missing or wrong -c:v: {args:?}, expected {}", job.codec.as_str());
+                }
+            }
+
+            /// Invariant: the output path is the final argument.
+            #[test]
+            fn output_is_the_last_argument(job in arb_encode_job()) {
+                if let Ok(args) = build_encode_args(&job, EncodePass::Single) {
+                    assert_eq!(args.last().unwrap(), "output.mp4",
+                        "output not last: {args:?}");
+                }
+            }
+
+            /// Invariant: no duplicate flag keys (e.g. two -crf, two -preset).
+            /// FFmpeg uses the last value for duplicate flags, which is a common source of bugs.
+            #[test]
+            fn no_duplicate_flag_keys(job in arb_encode_job()) {
+                if let Ok(args) = build_encode_args(&job, EncodePass::Single) {
+                    let mut seen = std::collections::HashSet::new();
+                    for arg_chunk in args.chunks(2) {
+                        if arg_chunk[0].starts_with('-') {
+                            assert!(seen.insert(&arg_chunk[0]),
+                                "duplicate flag {} in {args:?}", arg_chunk[0]);
+                        }
+                    }
+                }
+            }
+
+            /// Invariant: for software codecs with CRF mode, -crf <value> present.
+            #[test]
+            fn sw_crf_has_crf_flag(
+                crf in 0i32..63i32,
+                preset in ".*",
+            ) {
+                for codec in &[Codec::X264, Codec::X265, Codec::SvtAv1] {
+                    let job = EncodeJob {
+                        codec: *codec, crf, rate_control: RateControlMode::Crf,
+                        preset: preset.clone(), resolution: None, extra_args: vec![],
+                        ..sample_job(RateControlMode::Crf)
+                    };
+                    let args = build_encode_args(&job, EncodePass::Single).unwrap();
+                    assert!(has_pair(&args, "-crf", &crf.to_string()),
+                        "{codec:?}: missing -crf {crf} in {args:?}");
+                }
+            }
+
+            /// Invariant: CRF and QP are mutually exclusive for software codecs.
+            #[test]
+            fn sw_crf_and_qp_never_both_present(
+                crf in 0i32..63i32,
+                mode in prop_oneof![Just(RateControlMode::Crf), Just(RateControlMode::Qp)],
+            ) {
+                for codec in &[Codec::X264, Codec::X265] {
+                    let job = EncodeJob {
+                        codec: *codec, crf, rate_control: mode, preset: String::new(),
+                        resolution: None, extra_args: vec![],
+                        ..sample_job(mode)
+                    };
+                    if let Ok(args) = build_encode_args(&job, EncodePass::Single) {
+                        let has_crf = has_arg(&args, "-crf");
+                        let has_qp = has_arg(&args, "-qp");
+                        assert!(!(has_crf && has_qp),
+                            "{codec:?} mode={mode:?}: both -crf and -qp present: {args:?}");
+                    }
+                }
+            }
+
+            /// Invariant: for capped CRF, both -maxrate and -bufsize present with 'k' suffix.
+            #[test]
+            fn capped_crf_has_rate_control_args(job in arb_encode_job_sw_capped()) {
+                if let Ok(args) = build_encode_args(&job, EncodePass::Single) {
+                    // Find -maxrate argument
+                    let maxrate_idx = args.iter().position(|a| a == "-maxrate");
+                    if let Some(idx) = maxrate_idx {
+                        let val = &args[idx + 1];
+                        assert!(val.ends_with('k'),
+                            "-maxrate value should end with 'k': {val}");
+                    }
+                    let bufsize_idx = args.iter().position(|a| a == "-bufsize");
+                    if let Some(idx) = bufsize_idx {
+                        let val = &args[idx + 1];
+                        assert!(val.ends_with('k'),
+                            "-bufsize value should end with 'k': {val}");
+                    }
+                }
+            }
+
+            /// Invariant: first-pass VBR has no progress flags, writes to null output.
+            #[test]
+            fn vbr_first_pass_has_null_output(
+                job in arb_encode_job_sw_vbr(),
+            ) {
+                let passlog = Path::new("/tmp/plog");
+                if let Ok(args) = build_encode_args(&job, EncodePass::First(passlog)) {
+                    assert!(!has_arg(&args, "-progress"),
+                        "first pass should not have -progress: {args:?}");
+                    assert!(has_pair(&args, "-f", "null"),
+                        "first pass must write to null: {args:?}");
+                }
+            }
+
+            /// Invariant: SVT-AV1 QP mode includes enable-adaptive-quantization=0.
+            #[test]
+            fn svtav1_qp_disables_aq(
+                crf in 1i32..63i32,
+                preset in ".*",
+            ) {
+                let job = EncodeJob {
+                    codec: Codec::SvtAv1, crf, rate_control: RateControlMode::Qp,
+                    preset, resolution: None, extra_args: vec![],
+                    ..sample_job(RateControlMode::Qp)
+                };
+                let args = build_encode_args(&job, EncodePass::Single).unwrap();
+                assert!(has_pair(&args, "-svtav1-params", "enable-adaptive-quantization=0"),
+                    "SVT-AV1 QP must disable adaptive quantization: {args:?}");
+            }
+
+            /// Invariant: NVENC CRF uses -rc constqp + -cq, never -crf.
+            #[test]
+            fn nvenc_crf_uses_cq_not_crf(
+                crf in 0i32..63i32,
+                h264_h265 in prop_oneof![Just(Codec::NvencH264), Just(Codec::NvencH265)],
+            ) {
+                let job = EncodeJob {
+                    codec: h264_h265, crf, rate_control: RateControlMode::Crf,
+                    preset: String::new(), resolution: None, extra_args: vec![],
+                    ..sample_job(RateControlMode::Crf)
+                };
+                let args = build_encode_args(&job, EncodePass::Single).unwrap();
+                assert!(has_pair(&args, "-rc", "constqp"),
+                    "NVENC CRF missing -rc constqp: {args:?}");
+                assert!(has_arg(&args, "-cq"),
+                    "NVENC CRF missing -cq: {args:?}");
+                assert!(!has_arg(&args, "-crf"),
+                    "NVENC must not use -crf: {args:?}");
+            }
+
+            /// Invariant: QSV CRF uses -global_quality, never -crf.
+            #[test]
+            fn qsv_crf_uses_global_quality(
+                crf in 0i32..63i32,
+                h264_h265 in prop_oneof![Just(Codec::QsvH264), Just(Codec::QsvH265)],
+            ) {
+                let job = EncodeJob {
+                    codec: h264_h265, crf, rate_control: RateControlMode::Crf,
+                    preset: String::new(), resolution: None, extra_args: vec![],
+                    ..sample_job(RateControlMode::Crf)
+                };
+                let args = build_encode_args(&job, EncodePass::Single).unwrap();
+                assert!(has_arg(&args, "-global_quality"),
+                    "QSV CRF missing -global_quality: {args:?}");
+                assert!(!has_arg(&args, "-crf"),
+                    "QSV must not use -crf: {args:?}");
+            }
+
+            /// Invariant: AMF CRF uses -qp_i -qp_p -usage transcoding, never -crf.
+            #[test]
+            fn amf_crf_uses_qp_pairs(
+                crf in 0i32..63i32,
+                h264_h265 in prop_oneof![Just(Codec::AmfH264), Just(Codec::AmfH265)],
+            ) {
+                let job = EncodeJob {
+                    codec: h264_h265, crf, rate_control: RateControlMode::Crf,
+                    preset: String::new(), resolution: None, extra_args: vec![],
+                    ..sample_job(RateControlMode::Crf)
+                };
+                let args = build_encode_args(&job, EncodePass::Single).unwrap();
+                assert!(has_pair(&args, "-qp_i", &crf.to_string()),
+                    "AMF missing -qp_i: {args:?}");
+                assert!(!has_arg(&args, "-crf"),
+                    "AMF must not use -crf: {args:?}");
+            }
+
+            /// Invariant: VideoToolbox QP is rejected (not supported).
+            #[test]
+            fn videotoolbox_qp_always_rejected(
+                crf in 0i32..63i32,
+                h264_h265 in prop_oneof![Just(Codec::VideoToolboxH264), Just(Codec::VideoToolboxH265)],
+            ) {
+                let job = EncodeJob {
+                    codec: h264_h265, crf, rate_control: RateControlMode::Qp,
+                    preset: String::new(), resolution: None, extra_args: vec![],
+                    ..sample_job(RateControlMode::Qp)
+                };
+                assert!(build_encode_args(&job, EncodePass::Single).is_err(),
+                    "VideoToolbox QP should be rejected");
+            }
+
+            /// Invariant: VBR single-pass always errors for software codecs
+            /// (hardware encoders support single-pass VBR natively).
+            #[test]
+            fn vbr_single_pass_errors_for_sw_codecs(
+                target_br in 100.0f64..100000.0f64,
+            ) {
+                for codec in &[Codec::X264, Codec::X265, Codec::SvtAv1] {
+                    let job = EncodeJob {
+                        codec: *codec, rate_control: RateControlMode::Vbr,
+                        target_bitrate: target_br,
+                        ..sample_job(RateControlMode::Vbr)
+                    };
+                    assert!(build_encode_args(&job, EncodePass::Single).is_err(),
+                        "{codec:?} VBR single-pass should error");
+                }
+            }
+
+            /// Invariant: hardware VBR single-pass is valid (sets bitrate args without passlog).
+            #[test]
+            fn hw_vbr_single_pass_is_valid(
+                target_br in 100.0f64..100000.0f64,
+                codec in prop_oneof![
+                    Just(Codec::NvencH264), Just(Codec::QsvH264),
+                    Just(Codec::VideoToolboxH264), Just(Codec::VaapiH264), Just(Codec::AmfH264),
+                ],
+            ) {
+                let job = EncodeJob {
+                    codec, rate_control: RateControlMode::Vbr,
+                    target_bitrate: target_br,
+                    resolution: None, preset: String::new(), extra_args: vec![],
+                    ..sample_job(RateControlMode::Vbr)
+                };
+                let args = build_encode_args(&job, EncodePass::Single).unwrap();
+                assert!(has_pair(&args, "-b:v", &format!("{:.0}k", target_br)),
+                    "HW VBR single-pass missing -b:v: {args:?}");
+            }
+
+            /// Invariant: for any valid single-pass job, output is a single file path (not null).
+            #[test]
+            fn single_pass_output_is_file(job in arb_encode_job()) {
+                if let Ok(args) = build_encode_args(&job, EncodePass::Single) {
+                    let last = args.last().unwrap();
+                    assert!(!last.starts_with('-'),
+                        "last arg should not be a flag: {last}");
+                    assert!(!last.is_empty(),
+                        "last arg should not be empty");
+                }
+            }
+        }
+
+        fn arb_encode_job_sw_capped() -> impl Strategy<Value = EncodeJob> {
+            (any::<i32>(), any::<f64>(), any::<f64>(), any::<String>()).prop_map(
+                |(crf, max_br, bufsize, preset)| {
+                    let crf = crf.abs().min(63);
+                    let max_br = max_br.abs().min(100000.0).max(100.0);
+                    EncodeJob {
+                        codec: Codec::X264,
+                        crf,
+                        rate_control: RateControlMode::CappedCrf,
+                        max_bitrate: max_br,
+                        bufsize: bufsize.abs().min(200000.0),
+                        preset,
+                        resolution: None,
+                        extra_args: vec![],
+                        ..sample_job(RateControlMode::CappedCrf)
+                    }
+                },
+            )
+        }
+
+        fn arb_encode_job_sw_vbr() -> impl Strategy<Value = EncodeJob> {
+            (any::<i32>(), any::<f64>(), any::<String>()).prop_map(|(crf, target_br, preset)| {
+                let crf = crf.abs().min(63);
+                let target_br = target_br.abs().min(100000.0).max(100.0);
+                EncodeJob {
+                    codec: Codec::X264,
+                    crf,
+                    rate_control: RateControlMode::Vbr,
+                    target_bitrate: target_br,
+                    preset,
+                    resolution: None,
+                    extra_args: vec![],
+                    ..sample_job(RateControlMode::Vbr)
+                }
+            })
+        }
     }
 }

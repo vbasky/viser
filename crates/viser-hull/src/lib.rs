@@ -311,3 +311,181 @@ mod tests {
         assert!(bd_rate(&a, &b).is_err());
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_point() -> impl Strategy<Value = Point> {
+        (0.0f64..10000.0f64, 0.0f64..100.0f64).prop_map(|(bitrate, vmaf)| Point {
+            resolution: Resolution::new(1920, 1080),
+            codec: Codec::X264,
+            crf: 23,
+            bitrate,
+            vmaf,
+            psnr: 0.0,
+            ssim: 0.0,
+        })
+    }
+
+    fn arb_multi_res_points() -> impl Strategy<Value = Vec<Point>> {
+        let res = prop_oneof![
+            Just(Resolution::new(640, 360)),
+            Just(Resolution::new(1280, 720)),
+            Just(Resolution::new(1920, 1080)),
+            Just(Resolution::new(3840, 2160)),
+        ];
+        let point = (0.0f64..10000.0f64, arb_vmaf(), res, arb_codec()).prop_map(
+            |(bitrate, vmaf, resolution, codec)| Point {
+                resolution,
+                codec,
+                crf: 23,
+                bitrate,
+                vmaf,
+                psnr: 0.0,
+                ssim: 0.0,
+            },
+        );
+        proptest::collection::vec(point, 0..50)
+    }
+
+    fn arb_codec() -> impl Strategy<Value = Codec> {
+        prop_oneof![Just(Codec::X264), Just(Codec::X265), Just(Codec::SvtAv1),]
+    }
+
+    fn arb_vmaf() -> impl Strategy<Value = f64> {
+        0.0f64..100.0f64
+    }
+
+    proptest! {
+        /// Invariant: hull points are monotonically increasing in bitrate.
+        #[test]
+        fn hull_points_are_sorted_by_bitrate(points in proptest::collection::vec(arb_point(), 0..100)) {
+            let hull = compute_upper(&points);
+            for w in hull.points.windows(2) {
+                assert!(w[0].bitrate <= w[1].bitrate,
+                    "hull not sorted: {} kbps before {} kbps", w[0].bitrate, w[1].bitrate);
+            }
+        }
+
+        /// Invariant: hull points are monotonically increasing in VMAF.
+        /// Real R-D data is always monotonic (higher bitrate = higher quality). Synthetic
+        /// random data can violate this, so we constrain to monotonic inputs.
+        #[test]
+        fn hull_points_are_sorted_by_vmaf(points in proptest::collection::vec(arb_point(), 3..100)) {
+            let mut sorted: Vec<Point> = points.into_iter().collect();
+            sorted.sort_by(|a, b| a.bitrate.partial_cmp(&b.bitrate).unwrap());
+            // Make VMAF monotonic (real encoding data is: higher bitrate = equal or higher VMAF)
+            let mut max_vmaf = 0.0;
+            for p in sorted.iter_mut() {
+                if p.vmaf < max_vmaf {
+                    p.vmaf = max_vmaf;
+                }
+                max_vmaf = p.vmaf;
+            }
+            let hull = compute_upper(&sorted);
+            for w in hull.points.windows(2) {
+                assert!(w[0].vmaf <= w[1].vmaf,
+                    "hull vmaf not monotonic: {} before {}", w[0].vmaf, w[1].vmaf);
+            }
+        }
+
+        /// Invariant: the hull is convex — for any 3 consecutive points,
+        /// the cross product must be <= 0 (counterclockwise turn for upper hull).
+        #[test]
+        fn hull_is_convex(points in proptest::collection::vec(arb_point(), 0..100)) {
+            let hull = compute_upper(&points);
+            for w in hull.points.windows(3) {
+                let cp = cross(&w[0], &w[1], &w[2]);
+                assert!(cp <= 1e-9,
+                    "hull not convex: cross({:.1},{:.1}) -> ({:.1},{:.1}) -> ({:.1},{:.1}) = {cp}",
+                    w[0].bitrate, w[0].vmaf, w[1].bitrate, w[1].vmaf, w[2].bitrate, w[2].vmaf);
+            }
+        }
+
+        /// Invariant: every input point lies on or below the hull.
+        #[test]
+        fn all_input_points_below_hull(points in proptest::collection::vec(arb_point(), 2..100)) {
+            let mut sorted: Vec<Point> = points.into_iter().collect();
+            sorted.sort_by(|a, b| a.bitrate.partial_cmp(&b.bitrate).unwrap());
+            let mut max_vmaf = 0.0;
+            for p in sorted.iter_mut() {
+                if p.vmaf < max_vmaf { p.vmaf = max_vmaf; }
+                max_vmaf = p.vmaf;
+            }
+            let hull = compute_upper(&sorted);
+            if hull.points.len() < 2 { return Ok(()); }
+            for p in &sorted {
+                let on_or_below = is_point_below_hull(p, &hull.points);
+                assert!(on_or_below,
+                    "point ({:.1}, {:.1}) lies ABOVE the convex hull", p.bitrate, p.vmaf);
+            }
+        }
+
+        /// Invariant: compute_per_codec produces a hull per codec, and each
+        /// sub-hull contains only that codec's points.
+        #[test]
+        fn per_codec_hulls_are_partitions(points in arb_multi_res_points()) {
+            let hulls = compute_per_codec(&points);
+            for (codec, hull) in &hulls {
+                for p in &hull.points {
+                    assert_eq!(p.codec, *codec,
+                        "per-codec hull for {:?} contains point with codec {:?}", codec, p.codec);
+                }
+                // Verify sub-hull convexity
+                for w in hull.points.windows(3) {
+                    let cp = cross(&w[0], &w[1], &w[2]);
+                    assert!(cp <= 1e-9, "per-codec hull not convex");
+                }
+            }
+        }
+
+        /// Invariant: hull length never exceeds input length.
+        #[test]
+        fn hull_no_longer_than_input(points in proptest::collection::vec(arb_point(), 0..100)) {
+            let hull = compute_upper(&points);
+            assert!(hull.points.len() <= points.len(),
+                "hull has {} points but input had {}", hull.points.len(), points.len());
+        }
+
+        /// Invariant: first and last input points (by bitrate) always appear on hull.
+        #[test]
+        fn first_and_last_points_are_on_hull(points in proptest::collection::vec(arb_point(), 2..100)) {
+            let mut sorted = points.clone();
+            sorted.sort_by(|a, b| a.bitrate.partial_cmp(&b.bitrate).unwrap());
+            let min_bitrate = sorted.first().unwrap().bitrate;
+            let max_bitrate = sorted.last().unwrap().bitrate;
+            let hull = compute_upper(&points);
+            // The hull must span at least the bitrate range of the input
+            assert!(hull.points.first().unwrap().bitrate <= min_bitrate + 1e-9,
+                "hull start {} > input min {}", hull.points.first().unwrap().bitrate, min_bitrate);
+            assert!(hull.points.last().unwrap().bitrate >= max_bitrate - 1e-9,
+                "hull end {} < input max {}", hull.points.last().unwrap().bitrate, max_bitrate);
+        }
+    }
+
+    /// Check if a point is on or below the upper convex hull line segments.
+    fn is_point_below_hull(p: &Point, hull_points: &[Point]) -> bool {
+        // For an upper hull, "below" means the point's VMAF is <= the hull's VMAF
+        // at the same bitrate, using linear interpolation.
+        if p.bitrate <= hull_points[0].bitrate {
+            return p.vmaf <= hull_points[0].vmaf + 1e-9;
+        }
+        if p.bitrate >= hull_points.last().unwrap().bitrate {
+            return p.vmaf <= hull_points.last().unwrap().vmaf + 1e-9;
+        }
+        // Find the two hull points bracketing p's bitrate
+        for i in 0..hull_points.len() - 1 {
+            let a = &hull_points[i];
+            let b = &hull_points[i + 1];
+            if p.bitrate >= a.bitrate && p.bitrate <= b.bitrate {
+                // Linear interpolation: hull VMAF at p.bitrate
+                let t = (p.bitrate - a.bitrate) / (b.bitrate - a.bitrate);
+                let hull_vmaf = a.vmaf + t * (b.vmaf - a.vmaf);
+                return p.vmaf <= hull_vmaf + 1e-9;
+            }
+        }
+        false
+    }
+}

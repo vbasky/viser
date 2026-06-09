@@ -932,4 +932,251 @@ mod tests {
         assert!((result.frames[0].vif - 0.5).abs() < 1e-9);
         assert!((result.frames[1].cambi - 0.0).abs() < 1e-9);
     }
+
+    // ── Extended VMAF log parsing corner cases ──
+    #[test]
+    fn test_parse_vmaf_log_ssim_no_float_prefix() {
+        let json = br#"{
+            "frames": [{"frameNum": 0, "metrics": {"ssim": 0.92}}],
+            "pooled_metrics": {"ssim": {"mean": 0.92}}
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        assert!((result.ssim - 0.92).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_ms_ssim_fallback_name() {
+        let json = br#"{
+            "frames": [{"frameNum": 0, "metrics": {"ms_ssim": 0.88}}],
+            "pooled_metrics": {}
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        assert!((result.ms_ssim - 0.88).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_psnr_cb_cr_fallback_names() {
+        let json = br#"{
+            "frames": [],
+            "pooled_metrics": {
+                "psnr_y": {"mean": 40.0},
+                "psnr_cb": {"mean": 44.0},
+                "psnr_cr": {"mean": 46.0}
+            }
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        assert!((result.psnr_u - 44.0).abs() < 1e-9, "Cb via psnr_cb");
+        assert!((result.psnr_v - 46.0).abs() < 1e-9, "Cr via psnr_cr");
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_psnr_u_v_fallback_names() {
+        let json = br#"{
+            "frames": [],
+            "pooled_metrics": {
+                "psnr_y": {"mean": 40.0},
+                "psnr_u": {"mean": 43.0},
+                "psnr_v": {"mean": 45.0}
+            }
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        assert!((result.psnr_u - 43.0).abs() < 1e-9, "Cb via psnr_u");
+        assert!((result.psnr_v - 45.0).abs() < 1e-9, "Cr via psnr_v");
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_pooled_missing_fallback_to_frame_mean() {
+        let json = br#"{
+            "frames": [
+                {"frameNum": 0, "metrics": {"vmaf": 80.0, "psnr_y": 36.0, "float_ssim": 0.90}},
+                {"frameNum": 1, "metrics": {"vmaf": 90.0, "psnr_y": 42.0, "float_ssim": 0.96}}
+            ],
+            "pooled_metrics": {}
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        assert!((result.vmaf - 85.0).abs() < 1e-9);
+        assert!((result.psnr - 39.0).abs() < 1e-9);
+        assert!((result.ssim - 0.93).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_empty_frames_and_pooled() {
+        let json = br#"{
+            "frames": [],
+            "pooled_metrics": {}
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        assert!((result.vmaf - 0.0).abs() < 1e-9);
+        assert!((result.psnr - 0.0).abs() < 1e-9);
+        assert!((result.ssim - 0.0).abs() < 1e-9);
+        assert!((result.ms_ssim - 0.0).abs() < 1e-9);
+        assert!((result.vif - 0.0).abs() < 1e-9);
+        assert!((result.cambi - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_single_frame_with_pooled() {
+        let json = br#"{
+            "frames": [{"frameNum": 0, "metrics": {"vmaf": 95.0}}],
+            "pooled_metrics": {"vmaf": {"mean": 95.0}}
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        assert!((result.vmaf - 95.0).abs() < 1e-9);
+        assert_eq!(result.pooled.vmaf.count, 1);
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_vif_mixed_naming() {
+        let json = br#"{
+            "frames": [{"frameNum": 0, "metrics": {
+                "integer_vif_scale0": 0.5,
+                "float_vif_scale0": 0.4,
+                "vif_scale1": 0.6,
+                "integer_vif_scale1": 0.6
+            }}],
+            "pooled_metrics": {}
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        // scale0: integer_vif_scale0=0.5 (first match), scale1: vif_scale1=0.6 (first match)
+        // mean = (0.5 + 0.6) / 2 = 0.55
+        assert!((result.vif - 0.55).abs() < 1e-9, "mean of 2 scales with naming variants");
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_xpsnr_per_frame_propagation() {
+        let json = br#"{
+            "frames": [
+                {"frameNum": 0, "metrics": {"vmaf": 85.0}}
+            ],
+            "pooled_metrics": {"vmaf": {"mean": 85.0}}
+        }"#;
+        let mut result = parse_vmaf_log(json, true).unwrap();
+        result.xpsnr = 0.0;
+        result.frames[0].xpsnr = 45.5;
+        assert!((result.frames[0].xpsnr - 45.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_pooled_distribution_single_frame() {
+        let json = br#"{
+            "frames": [{"frameNum": 0, "metrics": {"vmaf": 88.0}}],
+            "pooled_metrics": {"vmaf": {"mean": 88.0}}
+        }"#;
+        let result = parse_vmaf_log(json, false).unwrap();
+        assert_eq!(result.pooled.vmaf.count, 1);
+        assert!((result.pooled.vmaf.min - 88.0).abs() < 1e-9);
+        assert!((result.pooled.vmaf.max - 88.0).abs() < 1e-9);
+        assert!((result.pooled.vmaf.mean - 88.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_vmaf_log_per_frame_with_missing_metrics() {
+        let json = br#"{
+            "frames": [
+                {"frameNum": 0, "metrics": {"vmaf": 85.0}},
+                {"frameNum": 1, "metrics": {}}
+            ],
+            "pooled_metrics": {"vmaf": {"mean": 85.0}}
+        }"#;
+        let result = parse_vmaf_log(json, true).unwrap();
+        assert_eq!(result.frames.len(), 2);
+        assert!((result.frames[0].vmaf - 85.0).abs() < 1e-9);
+        assert!((result.frames[1].vmaf - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_parse_xpsnr_component_negative_inf() {
+        assert_eq!(parse_xpsnr_component("XPSNR y: -inf", "y:"), Some(100.0));
+    }
+
+    #[test]
+    fn test_parse_xpsnr_component_nan() {
+        assert_eq!(parse_xpsnr_component("XPSNR y: NaN", "y:"), Some(100.0));
+    }
+
+    #[test]
+    fn test_parse_xpsnr_component_regular() {
+        assert!((parse_xpsnr_component("XPSNR u: 44.5678", "u:").unwrap() - 44.5678).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_parse_xpsnr_component_bad_format() {
+        assert_eq!(parse_xpsnr_component("n: 1 XPSNR", "y:"), None);
+    }
+
+    #[test]
+    fn test_sample_indices_uneven() {
+        assert_eq!(sample_indices(5, 3), vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn test_sample_indices_more_samples_than_frames() {
+        assert_eq!(sample_indices(2, 10), vec![0, 1]);
+    }
+
+    #[test]
+    fn test_sample_indices_single_frame_input() {
+        assert_eq!(sample_indices(1, 5), vec![0]);
+    }
+
+    #[test]
+    fn test_sample_indices_large_values() {
+        let indices = sample_indices(1000, 5);
+        assert_eq!(indices.len(), 5);
+        assert_eq!(indices[0], 0);
+        assert_eq!(indices[4], 999);
+    }
+
+    // ── pooled_mean and frame_metric ──
+    #[test]
+    fn test_pooled_mean_first_match_wins() {
+        let mut map = std::collections::HashMap::new();
+        map.insert("psnr_y".to_string(), PooledMetric { mean: 40.0 });
+        map.insert("psnr".to_string(), PooledMetric { mean: 39.0 });
+        assert_eq!(
+            pooled_mean(&VmafLog { frames: vec![], pooled_metrics: map }, &["psnr_y", "psnr"]),
+            40.0
+        );
+    }
+
+    #[test]
+    fn test_pooled_mean_fallback() {
+        let mut map = std::collections::HashMap::new();
+        map.insert("psnr".to_string(), PooledMetric { mean: 39.0 });
+        assert_eq!(
+            pooled_mean(&VmafLog { frames: vec![], pooled_metrics: map }, &["psnr_y", "psnr"]),
+            39.0
+        );
+    }
+
+    #[test]
+    fn test_pooled_mean_missing_all() {
+        assert_eq!(
+            pooled_mean(
+                &VmafLog { frames: vec![], pooled_metrics: std::collections::HashMap::new() },
+                &["psnr_y", "psnr"]
+            ),
+            0.0
+        );
+    }
+
+    #[test]
+    fn test_frame_metric_first_match() {
+        let mut map = std::collections::HashMap::new();
+        map.insert("psnr_y".to_string(), 40.0);
+        map.insert("psnr".to_string(), 39.0);
+        assert_eq!(frame_metric(&map, &["psnr_y", "psnr"]), Some(40.0));
+    }
+
+    #[test]
+    fn test_frame_metric_fallback() {
+        let mut map = std::collections::HashMap::new();
+        map.insert("psnr".to_string(), 39.0);
+        assert_eq!(frame_metric(&map, &["psnr_y", "psnr"]), Some(39.0));
+    }
+
+    #[test]
+    fn test_frame_metric_missing() {
+        assert_eq!(frame_metric(&std::collections::HashMap::new(), &["psnr_y"]), None);
+    }
 }

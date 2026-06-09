@@ -210,6 +210,157 @@ mod tests {
         viser_hull::compute_upper(&points)
     }
 
+    // ── Property-based tests ──
+    #[cfg(test)]
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn arb_point() -> impl Strategy<Value = Point> {
+            let res = prop_oneof![
+                Just(Resolution::new(640, 360)),
+                Just(Resolution::new(1280, 720)),
+                Just(Resolution::new(1920, 1080)),
+            ];
+            (0.0f64..10000.0f64, 0.0f64..100.0f64, res, 0i32..51i32).prop_map(
+                |(bitrate, vmaf, res, crf)| Point {
+                    resolution: res,
+                    codec: Codec::X264,
+                    crf,
+                    bitrate,
+                    vmaf,
+                    psnr: 0.0,
+                    ssim: 0.0,
+                },
+            )
+        }
+
+        fn arb_opts() -> impl Strategy<Value = Opts> {
+            (
+                1i32..12i32,
+                0.0f64..2000.0f64,
+                2000.0f64..20000.0f64,
+                0.0f64..60.0f64,
+                70.0f64..100.0f64,
+                0.0f64..500.0f64,
+            )
+                .prop_map(|(num_rungs, min_br, max_br, min_q, max_q, audio)| Opts {
+                    num_rungs,
+                    min_bitrate: min_br,
+                    max_bitrate: max_br.max(min_br + 100.0),
+                    min_vmaf: min_q,
+                    max_vmaf: max_q.max(min_q + 1.0),
+                    audio_bitrate_kbps: audio,
+                })
+        }
+
+        proptest! {
+            /// Invariant: ladder rungs are sorted by bitrate ascending.
+            #[test]
+            fn ladder_rungs_sorted_by_bitrate(
+                points in proptest::collection::vec(arb_point(), 0..60),
+                opts in arb_opts(),
+            ) {
+                let hull = viser_hull::compute_upper(&points);
+                let ladder = select(&hull, &opts);
+                for w in ladder.rungs.windows(2) {
+                    assert!(w[0].point.bitrate <= w[1].point.bitrate,
+                        "ladder not sorted: {} kbps before {} kbps",
+                        w[0].point.bitrate, w[1].point.bitrate);
+                }
+            }
+
+            /// Invariant: ladder never has more rungs than requested.
+            #[test]
+            fn ladder_rung_count_within_limit(
+                points in proptest::collection::vec(arb_point(), 0..60),
+                opts in arb_opts(),
+            ) {
+                let hull = viser_hull::compute_upper(&points);
+                let ladder = select(&hull, &opts);
+                assert!(ladder.rungs.len() <= opts.num_rungs as usize,
+                    "got {} rungs, asked for {}", ladder.rungs.len(), opts.num_rungs);
+            }
+
+            /// Invariant: all rungs are within the specified bitrate bounds.
+            #[test]
+            fn ladder_rungs_within_bitrate_bounds(
+                points in proptest::collection::vec(arb_point(), 0..60),
+                opts in arb_opts(),
+            ) {
+                let hull = viser_hull::compute_upper(&points);
+                let ladder = select(&hull, &opts);
+                let effective_max = opts.max_bitrate - opts.audio_bitrate_kbps;
+                for rung in &ladder.rungs {
+                    assert!(rung.point.bitrate >= opts.min_bitrate - 1e-9,
+                        "rung bitrate {:.1} below min {:.1}",
+                        rung.point.bitrate, opts.min_bitrate);
+                    assert!(rung.point.bitrate <= effective_max + 1e-9,
+                        "rung bitrate {:.1} above max {:.1} (effective after audio {:.1})",
+                        rung.point.bitrate, effective_max, opts.max_bitrate);
+                }
+            }
+
+            /// Invariant: all rungs are within VMAF bounds.
+            #[test]
+            fn ladder_rungs_within_vmaf_bounds(
+                points in proptest::collection::vec(arb_point(), 0..60),
+                opts in arb_opts(),
+            ) {
+                let hull = viser_hull::compute_upper(&points);
+                let ladder = select(&hull, &opts);
+                for rung in &ladder.rungs {
+                    assert!(rung.point.vmaf >= opts.min_vmaf - 1e-9,
+                        "rung vmaf {:.1} below min {:.1}", rung.point.vmaf, opts.min_vmaf);
+                }
+            }
+
+            /// Invariant: rung indices form a contiguous sequence 0..N-1.
+            #[test]
+            fn ladder_rung_indices_contiguous(
+                points in proptest::collection::vec(arb_point(), 0..60),
+                opts in arb_opts(),
+            ) {
+                let hull = viser_hull::compute_upper(&points);
+                let ladder = select(&hull, &opts);
+                let indices: Vec<i32> = ladder.rungs.iter().map(|r| r.index).collect();
+                let expected: Vec<i32> = (0..ladder.rungs.len() as i32).collect();
+                assert_eq!(indices, expected, "rung indices not contiguous");
+            }
+
+            /// Invariant: bitrate_range first <= last (after sorting the rungs).
+            #[test]
+            fn ladder_bitrate_range_ordered(
+                points in proptest::collection::vec(arb_point(), 1..60),
+            ) {
+                let mut sorted = points;
+                sorted.sort_by(|a, b| a.bitrate.partial_cmp(&b.bitrate).unwrap());
+                let ladder = Ladder {
+                    rungs: sorted.iter().enumerate().map(|(i, p)| Rung {
+                        point: p.clone(), index: i as i32
+                    }).collect()
+                };
+                let (lo, hi) = ladder.bitrate_range();
+                assert!(lo <= hi, "bitrate range out of order: {lo} > {hi}");
+            }
+            #[test]
+            fn ladder_savings_bounded(
+                points in proptest::collection::vec(arb_point(), 1..60),
+                fixed_bitrate in 1000.0f64..20000.0f64,
+            ) {
+                let ladder = Ladder {
+                    rungs: points.iter().enumerate().map(|(i, p)| Rung {
+                        point: p.clone(), index: i as i32
+                    }).collect()
+                };
+                let s = ladder.savings(fixed_bitrate);
+                assert!(s >= 0.0, "savings negative: {s}");
+                assert!(s <= 100.0, "savings > 100%: {s}");
+            }
+
+        }
+    }
+
     #[test]
     fn test_select_empty_hull() {
         let h = Hull { points: vec![] };

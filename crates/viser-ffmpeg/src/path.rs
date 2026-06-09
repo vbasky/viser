@@ -135,3 +135,138 @@ fn local_binary(name: &str) -> Option<String> {
     }
     if path.exists() { Some(path.to_string_lossy().into_owned()) } else { None }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── VMAF model validation ──
+    #[test]
+    fn test_validate_vmaf_model_known() {
+        assert!(validate_vmaf_model("vmaf_v0.6.1").is_ok());
+        assert!(validate_vmaf_model("vmaf_v0.6.1neg").is_ok());
+        assert!(validate_vmaf_model("vmaf_4k_v0.6.1").is_ok());
+        assert!(validate_vmaf_model("vmaf_b_v0.6.3").is_ok());
+        assert!(validate_vmaf_model("vmaf_4k_v0.6.1neg").is_ok());
+    }
+
+    #[test]
+    fn test_validate_vmaf_model_unknown() {
+        assert!(validate_vmaf_model("vmaf_v99.0").is_err());
+        assert!(validate_vmaf_model("unknown_model").is_err());
+        assert!(validate_vmaf_model("").is_err());
+    }
+
+    // ── Version parsing ──
+    #[test]
+    fn test_parse_ffmpeg_version_standard() {
+        let v = parse_ffmpeg_version("ffmpeg version 7.1.1 Copyright", "ffmpeg".into()).unwrap();
+        assert_eq!(v.major, 7);
+        assert_eq!(v.minor, 1);
+        assert_eq!(v.raw, "7.1.1");
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_version_ffprobe() {
+        let v = parse_ffmpeg_version("ffprobe version 6.0.0 Copyright", "ffprobe".into()).unwrap();
+        assert_eq!(v.major, 6);
+        assert_eq!(v.minor, 0);
+        assert_eq!(v.raw, "6.0.0");
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_version_with_n_prefix() {
+        let v =
+            parse_ffmpeg_version("ffmpeg version n7.1.1-1234 Copyright", "ffmpeg".into()).unwrap();
+        assert_eq!(v.major, 7);
+        assert_eq!(v.minor, 1);
+        assert_eq!(v.raw, "7.1.1-1234");
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_version_old() {
+        let v = parse_ffmpeg_version("ffmpeg version 4.4.0 Copyright", "ffmpeg".into()).unwrap();
+        assert_eq!(v.major, 4);
+        assert_eq!(v.minor, 4);
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_version_major_only() {
+        let v = parse_ffmpeg_version("ffmpeg version 7 Copyright", "ffmpeg".into()).unwrap();
+        assert_eq!(v.major, 7);
+        assert_eq!(v.minor, 0);
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_version_two_parts() {
+        let v = parse_ffmpeg_version("ffmpeg version 7.0 Copyright", "ffmpeg".into()).unwrap();
+        assert_eq!(v.major, 7);
+        assert_eq!(v.minor, 0);
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_version_three_parts() {
+        let v = parse_ffmpeg_version("ffmpeg version 5.1.3 Copyright", "ffmpeg".into()).unwrap();
+        assert_eq!(v.major, 5);
+        assert_eq!(v.minor, 1);
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_version_unrecognized_line() {
+        assert!(parse_ffmpeg_version("some random text", "ffmpeg".into()).is_err());
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_version_empty() {
+        assert!(parse_ffmpeg_version("", "ffmpeg".into()).is_err());
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_version_bogus_after_prefix() {
+        // "ffmpeg version abc" — "abc" is not a valid version
+        assert!(parse_ffmpeg_version("ffmpeg version not-a-version", "ffmpeg".into()).is_err());
+    }
+
+    // ── Path functions ──
+    #[test]
+    fn test_ffmpeg_path_returns_string() {
+        let path = ffmpeg_path();
+        assert!(!path.is_empty());
+    }
+
+    #[test]
+    fn test_ffprobe_path_returns_string() {
+        let path = ffprobe_path();
+        assert!(!path.is_empty());
+    }
+
+    #[test]
+    fn test_ffmpeg_path_respects_env() {
+        let old = std::env::var("VISER_FFMPEG").ok();
+        unsafe {
+            std::env::set_var("VISER_FFMPEG", "/custom/ffmpeg");
+        }
+        assert_eq!(ffmpeg_path(), "/custom/ffmpeg");
+        unsafe {
+            match old {
+                Some(v) => std::env::set_var("VISER_FFMPEG", v),
+                None => std::env::remove_var("VISER_FFMPEG"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_ffprobe_path_respects_env() {
+        let old = std::env::var("VISER_FFPROBE").ok();
+        unsafe {
+            std::env::set_var("VISER_FFPROBE", "/custom/ffprobe");
+        }
+        assert_eq!(ffprobe_path(), "/custom/ffprobe");
+        unsafe {
+            match old {
+                Some(v) => std::env::set_var("VISER_FFPROBE", v),
+                None => std::env::remove_var("VISER_FFPROBE"),
+            }
+        }
+    }
+}

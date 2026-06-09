@@ -1,4 +1,27 @@
 # Changelog
+## [0.6.1] - 2026-06-09
+
+### Fixed
+
+- **HDR detection with ffprobe >= 8.0** — `color_primaries` and `bits_per_raw_sample`
+  are no longer reported as top-level stream fields by ffprobe 8.x for HEVC/Matroska.
+  `hdr_kind()` now falls back to the `color_space` field (`bt2020nc`, `bt2020c`) when
+  `color_primaries` is absent, combined with pixel-format bit-depth detection.
+
+### Added
+
+- **Property-based tests (`proptest`)** — randomised mathematical-invariant tests for
+  convex hull (monotonicity, convexity, per-codec partitioning, below-hull containment)
+  and ladder selection (bitrate/VMAF sorting, rung-count bounds, index contiguity).
+- **FFmpeg argument invariants** — proptest-driven verification of encoder argument
+  construction against FFmpeg's documented encoder syntax.
+- **FATE-style integration tests** — 37 tests that generate synthetic test media via
+  `ffmpeg -f lavfi` and exercise the full probe → encode → measure pipeline against
+  real ffmpeg/ffprobe, validating resolution, codec, duration, bitrate monotonicity,
+  VMAF scoring, progress reporting, segment extraction, and concatenation.
+- **`just coverage` / `just coverage-lcov`** recipes and CI coverage job
+  (`cargo llvm-cov`).
+
 ## [0.5.0] - 2026-06-07
 
 ### Added

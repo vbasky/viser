@@ -55,6 +55,45 @@ jobs:
       - name: test
         run: cargo test --workspace
 
+  coverage:
+    name: coverage (llvm-cov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: install system deps
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+
+      - name: install rust
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add llvm-tools-preview
+
+      - name: install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-llvm-cov-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: coverage
+        run: cargo llvm-cov --workspace --lcov --output-path coverage.lcov
+
+      - name: coverage summary
+        run: cargo llvm-cov --workspace --summary-only
+
+      - name: upload coverage artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-lcov
+          path: coverage.lcov
+
       - name: doc
         env:
           RUSTDOCFLAGS: "-D warnings"

@@ -19,6 +19,22 @@ test:
 test-release:
     cargo test --release
 
+# Run tests with code coverage (requires: cargo install cargo-llvm-cov)
+test-cover:
+    cargo llvm-cov --workspace
+
+# Run tests with coverage and generate HTML report
+coverage: test-cover
+    cargo llvm-cov --workspace --html --open
+
+# Run tests with coverage, generate lcov for CI/IDEs
+coverage-lcov:
+    cargo llvm-cov --workspace --lcov --output-path coverage.lcov
+
+# Run tests with coverage and fail if under threshold
+coverage-check:
+    cargo llvm-cov --workspace --fail-under-lines 65
+
 # Run clippy with workspace lints
 lint:
     cargo clippy --workspace --all-targets
