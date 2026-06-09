@@ -22,6 +22,21 @@
 - **`just coverage` / `just coverage-lcov`** recipes and CI coverage job
   (`cargo llvm-cov`).
 
+## [0.6.0] - 2026-06-08
+
+### Added
+
+- **Hardware encoder support** — 10 hardware-accelerated codec variants:
+  NVENC (`h264_nvenc`, `hevc_nvenc`), QSV (`h264_qsv`, `hevc_qsv`),
+  VideoToolbox (`h264_videotoolbox`, `hevc_videotoolbox`),
+  VAAPI (`h264_vaapi`, `hevc_vaapi`), AMF (`h264_amf`, `hevc_amf`).
+- **Runtime HW encoder detection** via `ffmpeg -encoders` — available hardware
+  encoders are discovered at startup and surfaced automatically.
+- **Per-backend rate-control dispatch** — CRF, QP, and VBR modes mapped to
+  each encoder's native syntax (e.g. NVENC `-cq`, QSV `-global_quality`).
+- **Per-backend preset mapping** — NVENC `p1`–`p7`, QSV speed levels,
+  VAAPI compression levels, AMF quality/speed, VideoToolbox real-time flag.
+
 ## [0.5.0] - 2026-06-07
 
 ### Added
