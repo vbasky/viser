@@ -111,8 +111,10 @@ jobs:
           else                          color="#4c1"
           fi
           label="coverage"; value="${round}%"
-          lw=$((6 * ${#label} + 10)); vw=$((6 * ${#value} + 10)); total=$((lw + vw))
-          lx=$((lw * 5)); vx=$(((lw + vw / 2) * 10)); lt=$(((lw - 10) * 10)); vt=$(((vw - 10) * 10))
+          # box widths: label letters ~6px, value (digits + %) ~7px, +12px padding.
+          # no textLength -> glyphs render at natural width (no horizontal squish).
+          lw=$((6 * ${#label} + 12)); vw=$((7 * ${#value} + 12)); total=$((lw + vw))
+          lx=$((lw * 5)); vx=$(((lw * 2 + vw) * 5))
           mkdir -p badges
           printf '%s\n' \
           "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"$total\" height=\"20\" role=\"img\" aria-label=\"$label: $value\">" \
@@ -128,10 +130,10 @@ jobs:
           "    <rect width=\"$total\" height=\"20\" fill=\"url(#s)\"/>" \
           "  </g>" \
           "  <g fill=\"#fff\" text-anchor=\"middle\" font-family=\"Verdana,Geneva,DejaVu Sans,sans-serif\" text-rendering=\"geometricPrecision\" font-size=\"110\">" \
-          "    <text aria-hidden=\"true\" x=\"$lx\" y=\"150\" fill=\"#010101\" fill-opacity=\".3\" transform=\"scale(.1)\" textLength=\"$lt\">$label</text>" \
-          "    <text x=\"$lx\" y=\"140\" transform=\"scale(.1)\" fill=\"#fff\" textLength=\"$lt\">$label</text>" \
-          "    <text aria-hidden=\"true\" x=\"$vx\" y=\"150\" fill=\"#010101\" fill-opacity=\".3\" transform=\"scale(.1)\" textLength=\"$vt\">$value</text>" \
-          "    <text x=\"$vx\" y=\"140\" transform=\"scale(.1)\" fill=\"#fff\" textLength=\"$vt\">$value</text>" \
+          "    <text aria-hidden=\"true\" x=\"$lx\" y=\"150\" fill=\"#010101\" fill-opacity=\".3\" transform=\"scale(.1)\">$label</text>" \
+          "    <text x=\"$lx\" y=\"140\" transform=\"scale(.1)\" fill=\"#fff\">$label</text>" \
+          "    <text aria-hidden=\"true\" x=\"$vx\" y=\"150\" fill=\"#010101\" fill-opacity=\".3\" transform=\"scale(.1)\">$value</text>" \
+          "    <text x=\"$vx\" y=\"140\" transform=\"scale(.1)\" fill=\"#fff\">$value</text>" \
           "  </g>" \
           "</svg>" > badges/coverage.svg
           echo "coverage $value (color $color)"
