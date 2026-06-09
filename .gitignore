@@ -2,3 +2,8 @@
 Cargo.lock
 /.commandcode
 /.idea
+
+# coverage artifacts (badge SVG in badges/ is committed)
+coverage.lcov
+coverage.json
+*.profraw

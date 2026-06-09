@@ -58,6 +58,8 @@ jobs:
   coverage:
     name: coverage (llvm-cov)
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
 
@@ -86,7 +88,10 @@ jobs:
         run: cargo llvm-cov --workspace --lcov --output-path coverage.lcov
 
       - name: coverage summary
-        run: cargo llvm-cov --workspace --summary-only
+        run: cargo llvm-cov report --summary-only
+
+      - name: coverage json
+        run: cargo llvm-cov report --json --output-path coverage.json
 
       - name: upload coverage artifact
         uses: actions/upload-artifact@v5
@@ -94,11 +99,55 @@ jobs:
           name: coverage-lcov
           path: coverage.lcov
 
-      - name: upload to codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage.lcov
-          fail_ci_if_error: false
+      - name: generate coverage badge
+        run: |
+          pct=$(jq -r '.data[0].totals.lines.percent' coverage.json)
+          round=$(printf '%.0f' "$pct")
+          if   [ "$round" -lt 50 ]; then color="#e05d44"
+          elif [ "$round" -lt 60 ]; then color="#fe7d37"
+          elif [ "$round" -lt 70 ]; then color="#dfb317"
+          elif [ "$round" -lt 80 ]; then color="#a4a61d"
+          elif [ "$round" -lt 90 ]; then color="#97ca00"
+          else                          color="#4c1"
+          fi
+          label="coverage"; value="${round}%"
+          lw=$((6 * ${#label} + 10)); vw=$((6 * ${#value} + 10)); total=$((lw + vw))
+          lx=$((lw * 5)); vx=$(((lw + vw / 2) * 10)); lt=$(((lw - 10) * 10)); vt=$(((vw - 10) * 10))
+          mkdir -p badges
+          printf '%s\n' \
+          "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"$total\" height=\"20\" role=\"img\" aria-label=\"$label: $value\">" \
+          "  <title>$label: $value</title>" \
+          "  <linearGradient id=\"s\" x2=\"0\" y2=\"100%\">" \
+          "    <stop offset=\"0\" stop-color=\"#bbb\" stop-opacity=\".1\"/>" \
+          "    <stop offset=\"1\" stop-opacity=\".1\"/>" \
+          "  </linearGradient>" \
+          "  <clipPath id=\"r\"><rect width=\"$total\" height=\"20\" rx=\"3\" fill=\"#fff\"/></clipPath>" \
+          "  <g clip-path=\"url(#r)\">" \
+          "    <rect width=\"$lw\" height=\"20\" fill=\"#555\"/>" \
+          "    <rect x=\"$lw\" width=\"$vw\" height=\"20\" fill=\"$color\"/>" \
+          "    <rect width=\"$total\" height=\"20\" fill=\"url(#s)\"/>" \
+          "  </g>" \
+          "  <g fill=\"#fff\" text-anchor=\"middle\" font-family=\"Verdana,Geneva,DejaVu Sans,sans-serif\" text-rendering=\"geometricPrecision\" font-size=\"110\">" \
+          "    <text aria-hidden=\"true\" x=\"$lx\" y=\"150\" fill=\"#010101\" fill-opacity=\".3\" transform=\"scale(.1)\" textLength=\"$lt\">$label</text>" \
+          "    <text x=\"$lx\" y=\"140\" transform=\"scale(.1)\" fill=\"#fff\" textLength=\"$lt\">$label</text>" \
+          "    <text aria-hidden=\"true\" x=\"$vx\" y=\"150\" fill=\"#010101\" fill-opacity=\".3\" transform=\"scale(.1)\" textLength=\"$vt\">$value</text>" \
+          "    <text x=\"$vx\" y=\"140\" transform=\"scale(.1)\" fill=\"#fff\" textLength=\"$vt\">$value</text>" \
+          "  </g>" \
+          "</svg>" > badges/coverage.svg
+          echo "coverage $value (color $color)"
+
+      - name: commit coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- badges/coverage.svg; then
+            git add badges/coverage.svg
+            git commit -m "ci: update coverage badge [skip ci]"
+            git push
+          else
+            echo "coverage badge unchanged"
+          fi
 
       - name: doc
         env:
