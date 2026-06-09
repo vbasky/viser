@@ -12,7 +12,8 @@ commitment to a date.
 **Covered:** per-title convex-hull analysis, per-shot Trellis bit allocation,
 VMAF/PSNR/SSIM quality measurement, shot detection (scdet, PySceneDetect,
 TransNetV2), capped-CRF and CBR encoding, checkpoint/resume, content-adaptive
-encoding profiles, segment-level CRF tuning, comparison player.
+encoding profiles, segment-level CRF tuning, comparison player, hardware
+encoder support (NVENC, QuickSync, VideoToolbox, VAAPI, AMF — H.264/H.265).
 
 **Not covered:** see tiers below.
 
@@ -115,8 +116,33 @@ encoding profiles, segment-level CRF tuning, comparison player.
         if landed. See the FFmpeg-independence notes below.
   - [ ] **HDR-aware metric variants.** PQ/HLG-correct scoring across the suite;
         depends on and extends the **HDR support (proper)** item in P1.
-- [ ] **Hardware encoder support.** NVENC, QuickSync, VideoToolbox integration
-      for GPU-accelerated encodes.
+- [x] **Hardware encoder support.** NVENC, QuickSync, VideoToolbox, VAAPI, AMF
+      integration for GPU-accelerated encodes (H.264/H.265 only — AV1 HW is
+      deferred to OxiMedia). Shipped in 0.6.0:
+
+  - [x] *Runtime detection.* `ffmpeg -encoders` probed at CLI startup; available
+        hardware encoders cached in a `OnceLock<HashSet<Codec>>`.
+  - [x] *Codec enum.* Extended from 3 to 13 variants: 3 SW + 10 HW (5 backends
+        × H.264/H.265). Added `EncoderBackend`, `CodecFamily`, `backends()`,
+        `family()`, `is_hardware()`, `is_software()`.
+  - [x] *Rate-control dispatch.* `build_sw_args()` / `build_hw_args()` in
+        `viser-ffmpeg/src/encode.rs` with per-backend rate-control flags
+        (NVENC `-cq -rc constqp`, QSV `-global_quality`, VideoToolbox
+        `-quality`, VAAPI `-global_quality`, AMF `-qp_i / -qp_p`).
+  - [x] *Preset mapping.* NVENC `p1`-`p7`, QSV passthrough, VAAPI
+        `compression_level` 1-5, AMF `speed/balanced/quality`, in
+        `viser-encoding/src/lib.rs`.
+  - [x] *CLI integration.* All commands (`per-title analyze`, `per-title
+        deliver`, `per-shot analyze`, `per-segment analyze`, `encode`) accept
+        HW codec names and aliases (`nvenc`, `qsv`, `vt`, `vaapi`, `amf`,
+        `videotoolbox`).
+  - [x] *Chart labels.* `viser-chart` maps all 10 HW encoder names to
+        human-readable labels (e.g., `h264_nvenc` → `H.264 (NVENC)`).
+
+  **Scope boundary.** No AV1 hardware encoders — those belong to OxiMedia's
+  royalty-free domain. No native FFI bindings — all HW encoding goes through
+  the FFmpeg subprocess. GPU-accelerated VMAF remains deferred (libvmaf is
+  CPU-only; no viable GPU path exists).
 - [ ] **VP9 codec support.** Currently only H.264, H.265, and AV1.
 - [ ] **ML-based ladder prediction.** Feature extraction from source to predict
       ladders without trial encodes (Bitmovin/Mux-style). `viser-complexity`

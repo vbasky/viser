@@ -3,7 +3,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 
-use crate::{Codec, RateControlMode, Resolution, ffmpeg_path, probe};
+use crate::{Codec, EncoderBackend, RateControlMode, Resolution, ffmpeg_path, probe};
 
 /// Parameters for a single encode.
 #[derive(Debug, Clone)]
@@ -232,17 +232,56 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
 
     args.extend(["-c:v".into(), job.codec.as_str().into()]);
 
-    // Rate control mode
+    if job.codec.is_hardware() {
+        build_hw_args(&mut args, job, &pass)?;
+    } else {
+        build_sw_args(&mut args, job, &pass)?;
+    }
+
+    if !job.preset.is_empty() {
+        if job.codec.is_hardware() {
+            add_hw_preset(&mut args, job.codec, &job.preset);
+        } else {
+            args.extend(["-preset".into(), job.preset.clone()]);
+        }
+    }
+
+    if let Some(ref res) = job.resolution {
+        if res.width > 0 && res.height > 0 {
+            args.extend([
+                "-vf".into(),
+                format!("scale={}:{}:flags=lanczos", res.width, res.height),
+            ]);
+        }
+    }
+
+    args.extend(job.extra_args.iter().cloned());
+
+    match pass {
+        EncodePass::First(_) => {
+            args.extend(["-f".into(), "null".into()]);
+            args.push(null_output_path().into());
+        }
+        EncodePass::Single | EncodePass::Second(_) => args.push(job.output.clone()),
+    }
+
+    Ok(args)
+}
+
+fn build_sw_args(
+    args: &mut Vec<String>,
+    job: &EncodeJob,
+    pass: &EncodePass<'_>,
+) -> anyhow::Result<()> {
     match job.rate_control {
-        RateControlMode::Qp => match job.codec {
-            Codec::SvtAv1 => {
+        RateControlMode::Qp => {
+            if job.codec == Codec::SvtAv1 {
                 args.extend(["-qp".into(), job.crf.to_string()]);
                 args.extend(["-svtav1-params".into(), "enable-adaptive-quantization=0".into()]);
-            }
-            _ => {
+            } else {
                 args.extend(["-qp".into(), job.crf.to_string()]);
             }
-        },
+        }
         RateControlMode::CappedCrf => {
             if job.max_bitrate <= 0.0 {
                 anyhow::bail!("max bitrate must be greater than zero for capped CRF mode");
@@ -273,38 +312,152 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
                     anyhow::bail!("VBR mode requires a two-pass encode flow");
                 }
             };
-
             args.extend(["-passlogfile".into(), passlog.to_string_lossy().into_owned()]);
         }
         RateControlMode::Crf => {
             args.extend(["-crf".into(), job.crf.to_string()]);
         }
     }
+    Ok(())
+}
 
-    if !job.preset.is_empty() {
-        args.extend(["-preset".into(), job.preset.clone()]);
-    }
+fn build_hw_args(
+    args: &mut Vec<String>,
+    job: &EncodeJob,
+    _pass: &EncodePass<'_>,
+) -> anyhow::Result<()> {
+    let backend = job.codec.backend();
+    match job.rate_control {
+        RateControlMode::Crf | RateControlMode::CappedCrf => {
+            match backend {
+                EncoderBackend::Nvenc => {
+                    let cq = crf_to_nvenc_cq(job.crf);
+                    args.extend(["-cq".into(), cq.to_string()]);
+                    args.extend(["-rc".into(), "constqp".into()]);
+                }
+                EncoderBackend::Qsv => {
+                    let gq = crf_to_qsv_quality(job.crf);
+                    args.extend(["-global_quality".into(), gq.to_string()]);
+                }
+                EncoderBackend::VideoToolbox => {
+                    let qual = crf_to_vt_quality(job.crf);
+                    args.extend(["-quality".into(), qual.to_string()]);
+                }
+                EncoderBackend::Vaapi => {
+                    let gq = crf_to_qsv_quality(job.crf);
+                    args.extend(["-global_quality".into(), gq.to_string()]);
+                }
+                EncoderBackend::Amf => {
+                    args.extend(["-qp_i".into(), job.crf.to_string()]);
+                    args.extend(["-qp_p".into(), (job.crf + 2).to_string()]);
+                    args.extend(["-usage".into(), "transcoding".into()]);
+                }
+                EncoderBackend::Software => unreachable!(),
+            }
+            // VBV / maxrate for capped mode
+            if let RateControlMode::CappedCrf = job.rate_control {
+                if job.max_bitrate <= 0.0 {
+                    anyhow::bail!("max bitrate must be greater than zero for capped CRF mode");
+                }
+                let bufsize = if job.bufsize > 0.0 { job.bufsize } else { job.max_bitrate * 2.0 };
+                args.extend(["-maxrate".into(), format!("{:.0}k", job.max_bitrate)]);
+                args.extend(["-bufsize".into(), format!("{bufsize:.0}k")]);
+            }
+        }
+        RateControlMode::Qp => match backend {
+            EncoderBackend::VideoToolbox => {
+                anyhow::bail!("VideoToolbox does not support QP rate control mode");
+            }
+            _ => {
+                args.extend(["-qp".into(), job.crf.to_string()]);
+            }
+        },
+        RateControlMode::Vbr => {
+            if job.target_bitrate <= 0.0 {
+                anyhow::bail!("target bitrate must be greater than zero for VBR mode");
+            }
+            args.extend(["-b:v".into(), format!("{:.0}k", job.target_bitrate)]);
+            args.extend(["-maxrate".into(), format!("{:.0}k", job.target_bitrate * 2.0)]);
+            args.extend(["-bufsize".into(), format!("{:.0}k", job.target_bitrate * 4.0)]);
 
-    if let Some(ref res) = job.resolution {
-        if res.width > 0 && res.height > 0 {
-            args.extend([
-                "-vf".into(),
-                format!("scale={}:{}:flags=lanczos", res.width, res.height),
-            ]);
+            if backend == EncoderBackend::Nvenc {
+                args.extend(["-rc".into(), "vbr_hq".into()]);
+            }
         }
     }
+    Ok(())
+}
 
-    args.extend(job.extra_args.iter().cloned());
+fn crf_to_nvenc_cq(crf: i32) -> i32 {
+    let cq = (crf * 51) / 63;
+    cq.clamp(1, 51)
+}
 
-    match pass {
-        EncodePass::First(_) => {
-            args.extend(["-f".into(), "null".into()]);
-            args.push(null_output_path().into());
+fn crf_to_qsv_quality(crf: i32) -> i32 {
+    let gq = 100 - ((crf * 100) / 51);
+    gq.clamp(1, 100)
+}
+
+fn crf_to_vt_quality(crf: i32) -> f64 {
+    let q = 1.0 - (crf as f64 / 51.0);
+    q.clamp(0.0, 1.0)
+}
+
+fn add_hw_preset(args: &mut Vec<String>, codec: Codec, preset: &str) {
+    match codec.backend() {
+        EncoderBackend::Nvenc => {
+            let p = map_nvenc_preset(preset);
+            args.extend(["-preset".into(), p.into()]);
         }
-        EncodePass::Single | EncodePass::Second(_) => args.push(job.output.clone()),
+        EncoderBackend::Qsv => {
+            args.extend(["-preset".into(), preset.to_string()]);
+        }
+        EncoderBackend::Vaapi => {
+            args.extend(["-compression_level".into(), map_vaapi_preset(preset).into()]);
+        }
+        EncoderBackend::Amf => {
+            args.extend(["-quality".into(), map_amf_quality(preset).into()]);
+        }
+        EncoderBackend::VideoToolbox => {
+            if preset == "ultrafast" || preset == "superfast" || preset == "veryfast" {
+                args.extend(["-realtime".into(), "1".into()]);
+            }
+        }
+        EncoderBackend::Software => unreachable!(),
     }
+}
 
-    Ok(args)
+fn map_nvenc_preset(preset: &str) -> &str {
+    match preset {
+        "ultrafast" | "superfast" => "p1",
+        "veryfast" => "p2",
+        "faster" => "p3",
+        "fast" => "p4",
+        "medium" => "p5",
+        "slow" => "p6",
+        "slower" | "veryslow" => "p7",
+        other => other,
+    }
+}
+
+fn map_vaapi_preset(preset: &str) -> &str {
+    match preset {
+        "ultrafast" | "superfast" => "1",
+        "veryfast" | "faster" => "2",
+        "fast" | "medium" => "3",
+        "slow" => "4",
+        "slower" | "veryslow" => "5",
+        other => other,
+    }
+}
+
+fn map_amf_quality(preset: &str) -> &str {
+    match preset {
+        "ultrafast" | "superfast" => "speed",
+        "veryfast" | "faster" | "fast" => "balanced",
+        "medium" | "slow" | "slower" | "veryslow" => "quality",
+        other => other,
+    }
 }
 
 fn make_passlog_prefix(output: &str) -> PathBuf {

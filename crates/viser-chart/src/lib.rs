@@ -333,6 +333,16 @@ pub fn short_codec_name(codec: &str) -> &str {
         "libx265" => "H.265",
         "libsvtav1" => "AV1",
         "libvpx-vp9" => "VP9",
+        "h264_nvenc" => "H.264 (NVENC)",
+        "h264_qsv" => "H.264 (QSV)",
+        "h264_videotoolbox" => "H.264 (VT)",
+        "h264_vaapi" => "H.264 (VAAPI)",
+        "h264_amf" => "H.264 (AMF)",
+        "hevc_nvenc" => "H.265 (NVENC)",
+        "hevc_qsv" => "H.265 (QSV)",
+        "hevc_videotoolbox" => "H.265 (VT)",
+        "hevc_vaapi" => "H.265 (VAAPI)",
+        "hevc_amf" => "H.265 (AMF)",
         _ => codec,
     }
 }

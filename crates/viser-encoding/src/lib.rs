@@ -11,7 +11,9 @@ pub use cleanup::*;
 pub use progress::*;
 
 use serde::{Deserialize, Serialize};
-use viser_ffmpeg::{Codec, RES_480P, RES_720P, RES_1080P, RateControlMode, Resolution};
+use viser_ffmpeg::{
+    Codec, EncoderBackend, RES_480P, RES_720P, RES_1080P, RateControlMode, Resolution,
+};
 
 /// Common encoding parameters shared across all optimization modes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,9 +61,7 @@ impl Config {
             anyhow::bail!("must specify at least one codec");
         }
         for codec in &self.codecs {
-            match codec {
-                Codec::X264 | Codec::X265 | Codec::SvtAv1 => {}
-            }
+            let _ = codec;
         }
         if self.subsample < 0 {
             anyhow::bail!("subsample must be >= 0, got {}", self.subsample);
@@ -81,7 +81,18 @@ impl Config {
 }
 
 /// Maps a generic preset name to codec-specific presets.
+///
+/// Software encoders get passthrough (except SVT-AV1 which maps to numeric presets).
+/// Hardware encoders get per-backend preset mapping:
+/// - NVENC: p1..p7
+/// - QSV: passthrough (veryfast..veryslow)
+/// - VideoToolbox: realtime flag for fast presets
+/// - VAAPI: compression_level 1..5
+/// - AMF: speed/balanced/quality
 pub fn preset_for_codec(codec: Codec, preset: &str) -> String {
+    if codec.is_hardware() {
+        return hw_preset_for_codec(codec, preset);
+    }
     if codec != Codec::SvtAv1 {
         return preset.to_string();
     }
@@ -98,6 +109,38 @@ pub fn preset_for_codec(codec: Codec, preset: &str) -> String {
         other => return other.to_string(),
     }
     .to_string()
+}
+
+fn hw_preset_for_codec(codec: Codec, preset: &str) -> String {
+    match codec.backend() {
+        EncoderBackend::Nvenc => match preset {
+            "ultrafast" | "superfast" => "p1".into(),
+            "veryfast" => "p2".into(),
+            "faster" => "p3".into(),
+            "fast" => "p4".into(),
+            "medium" => "p5".into(),
+            "slow" => "p6".into(),
+            "slower" | "veryslow" => "p7".into(),
+            other => other.to_string(),
+        },
+        EncoderBackend::Qsv => preset.to_string(),
+        EncoderBackend::Vaapi => match preset {
+            "ultrafast" | "superfast" => "1".into(),
+            "veryfast" | "faster" => "2".into(),
+            "fast" | "medium" => "3".into(),
+            "slow" => "4".into(),
+            "slower" | "veryslow" => "5".into(),
+            other => other.to_string(),
+        },
+        EncoderBackend::Amf => match preset {
+            "ultrafast" | "superfast" => "speed".into(),
+            "veryfast" | "faster" | "fast" => "balanced".into(),
+            "medium" | "slow" | "slower" | "veryslow" => "quality".into(),
+            other => other.to_string(),
+        },
+        EncoderBackend::VideoToolbox => preset.to_string(),
+        EncoderBackend::Software => preset.to_string(),
+    }
 }
 
 fn num_cpus() -> usize {
@@ -191,6 +234,33 @@ mod tests {
     #[test]
     fn test_preset_for_codec_svtav1_passthrough_unknown() {
         assert_eq!(preset_for_codec(Codec::SvtAv1, "custom"), "custom");
+    }
+
+    #[test]
+    fn test_preset_for_codec_nvenc_maps() {
+        assert_eq!(preset_for_codec(Codec::NvencH264, "ultrafast"), "p1");
+        assert_eq!(preset_for_codec(Codec::NvencH264, "medium"), "p5");
+        assert_eq!(preset_for_codec(Codec::NvencH264, "veryslow"), "p7");
+    }
+
+    #[test]
+    fn test_preset_for_codec_qsv_passthrough() {
+        assert_eq!(preset_for_codec(Codec::QsvH264, "veryfast"), "veryfast");
+        assert_eq!(preset_for_codec(Codec::QsvH264, "medium"), "medium");
+    }
+
+    #[test]
+    fn test_preset_for_codec_vaapi_maps() {
+        assert_eq!(preset_for_codec(Codec::VaapiH264, "ultrafast"), "1");
+        assert_eq!(preset_for_codec(Codec::VaapiH264, "medium"), "3");
+        assert_eq!(preset_for_codec(Codec::VaapiH264, "veryslow"), "5");
+    }
+
+    #[test]
+    fn test_preset_for_codec_amf_maps() {
+        assert_eq!(preset_for_codec(Codec::AmfH264, "ultrafast"), "speed");
+        assert_eq!(preset_for_codec(Codec::AmfH264, "fast"), "balanced");
+        assert_eq!(preset_for_codec(Codec::AmfH264, "medium"), "quality");
     }
 
     #[test]

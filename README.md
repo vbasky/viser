@@ -290,7 +290,7 @@ pixel format, frame rate formatting).
 - Scene-transition smoothing — per-shot ladders switch abruptly between shots
 - ABR switching optimization — ladder rungs tuned for client switching behavior, not just quality-spaced
 - Cost-aware optimization — factor storage/CDN cost into ladder selection
-- HW acceleration in quality measurement — VMAF runs on CPU via libvmaf; GPU-accelerated path
+- HW acceleration in quality measurement — VMAF runs on CPU via libvmaf; GPU-accelerated path is not viable (libvmaf has no GPU backend)
 
 ### Limitations (design scope)
 
@@ -298,7 +298,6 @@ viser is designed for content-adaptive VOD encoding and explicitly does not addr
 
 - **No ML prediction** — 42+ trial encodes per analysis every time; Bitmovin/Mux predict ladders from source features in minutes, not hours. viser measures, not predicts.
 - **HDR analysis is best-effort only** — HDR is detected and gated behind `--allow-hdr`, but quality scoring still depends on SDR-oriented libvmaf.
-- **No hardware encoders** — NVENC, QuickSync, VideoToolbox not integrated. Software encoders only (libx264, libx265, libsvtav1).
 - **No streaming-aware optimization** — delivery can emit manifest metadata for files it wrote, but not HLS/DASH playlists or switching-aware ladder tuning.
 
 ## Documentation
@@ -318,10 +317,12 @@ viser is designed for content-adaptive VOD encoding and explicitly does not addr
 
 ## Status
 
-`0.4.x` — battle-tested algorithms ported from a production Go implementation.
-Per-title analysis, per-shot Trellis optimization, and quality measurement are
-covered by integration tests. The API may evolve before `1.0`. See the
-[status & roadmap](STATUS.md) for what's covered today and what's planned.
+`0.6.x` — hardware encoder support (NVENC, QuickSync, VideoToolbox, VAAPI, AMF
+for H.264/H.265) plus battle-tested algorithms ported from a production Go
+implementation. Per-title analysis, per-shot Trellis optimization, and quality
+measurement are covered by integration tests. The API may evolve before `1.0`.
+See the [status & roadmap](STATUS.md) for what's covered today and what's
+planned.
 
 ## License
 

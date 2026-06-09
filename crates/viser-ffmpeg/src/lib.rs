@@ -6,6 +6,7 @@
 
 mod cache;
 mod encode;
+mod hw_encode;
 mod path;
 mod probe;
 #[cfg(feature = "revelo")]
@@ -15,6 +16,7 @@ pub use probe_revelo::probe as probe_revelo;
 
 pub use cache::*;
 pub use encode::*;
+pub use hw_encode::*;
 pub use path::*;
 pub use probe::*;
 
@@ -22,6 +24,11 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Supported video codec.
+///
+/// Software encoders (libx264, libx265, libsvtav1) are always available.
+/// Hardware encoder variants require FFmpeg built with the matching SDK
+/// and a GPU with the matching ASIC at runtime; availability is detected
+/// via `ffmpeg -encoders`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Codec {
     /// H.264/AVC via `libx264`.
@@ -33,6 +40,68 @@ pub enum Codec {
     /// AV1 via `libsvtav1` (SVT-AV1).
     #[serde(rename = "libsvtav1")]
     SvtAv1,
+
+    // ── Hardware encoders (H.264) ──
+    /// NVIDIA NVENC H.264 (`h264_nvenc`).
+    #[serde(rename = "h264_nvenc")]
+    NvencH264,
+    /// Intel QuickSync H.264 (`h264_qsv`).
+    #[serde(rename = "h264_qsv")]
+    QsvH264,
+    /// Apple VideoToolbox H.264 (`h264_videotoolbox`).
+    #[serde(rename = "h264_videotoolbox")]
+    VideoToolboxH264,
+    /// Linux VAAPI H.264 (`h264_vaapi`).
+    #[serde(rename = "h264_vaapi")]
+    VaapiH264,
+    /// AMD AMF H.264 (`h264_amf`).
+    #[serde(rename = "h264_amf")]
+    AmfH264,
+
+    // ── Hardware encoders (H.265/HEVC) ──
+    /// NVIDIA NVENC HEVC (`hevc_nvenc`).
+    #[serde(rename = "hevc_nvenc")]
+    NvencH265,
+    /// Intel QuickSync HEVC (`hevc_qsv`).
+    #[serde(rename = "hevc_qsv")]
+    QsvH265,
+    /// Apple VideoToolbox HEVC (`hevc_videotoolbox`).
+    #[serde(rename = "hevc_videotoolbox")]
+    VideoToolboxH265,
+    /// Linux VAAPI HEVC (`hevc_vaapi`).
+    #[serde(rename = "hevc_vaapi")]
+    VaapiH265,
+    /// AMD AMF HEVC (`hevc_amf`).
+    #[serde(rename = "hevc_amf")]
+    AmfH265,
+}
+
+/// Hardware encoder backend (GPU vendor / API).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncoderBackend {
+    /// Software encoder (libx264, libx265, libsvtav1).
+    Software,
+    /// NVIDIA NVENC.
+    Nvenc,
+    /// Intel QuickSync.
+    Qsv,
+    /// Apple VideoToolbox.
+    VideoToolbox,
+    /// Linux VAAPI.
+    Vaapi,
+    /// AMD AMF.
+    Amf,
+}
+
+/// Codec family (compression standard).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodecFamily {
+    /// H.264/AVC.
+    H264,
+    /// H.265/HEVC.
+    H265,
+    /// AV1.
+    Av1,
 }
 
 impl Codec {
@@ -42,7 +111,58 @@ impl Codec {
             Codec::X264 => "libx264",
             Codec::X265 => "libx265",
             Codec::SvtAv1 => "libsvtav1",
+            Codec::NvencH264 => "h264_nvenc",
+            Codec::QsvH264 => "h264_qsv",
+            Codec::VideoToolboxH264 => "h264_videotoolbox",
+            Codec::VaapiH264 => "h264_vaapi",
+            Codec::AmfH264 => "h264_amf",
+            Codec::NvencH265 => "hevc_nvenc",
+            Codec::QsvH265 => "hevc_qsv",
+            Codec::VideoToolboxH265 => "hevc_videotoolbox",
+            Codec::VaapiH265 => "hevc_vaapi",
+            Codec::AmfH265 => "hevc_amf",
         }
+    }
+
+    /// Hardware encoder backend for this codec.
+    pub fn backend(&self) -> EncoderBackend {
+        match self {
+            Codec::X264 | Codec::X265 | Codec::SvtAv1 => EncoderBackend::Software,
+            Codec::NvencH264 | Codec::NvencH265 => EncoderBackend::Nvenc,
+            Codec::QsvH264 | Codec::QsvH265 => EncoderBackend::Qsv,
+            Codec::VideoToolboxH264 | Codec::VideoToolboxH265 => EncoderBackend::VideoToolbox,
+            Codec::VaapiH264 | Codec::VaapiH265 => EncoderBackend::Vaapi,
+            Codec::AmfH264 | Codec::AmfH265 => EncoderBackend::Amf,
+        }
+    }
+
+    /// Codec family (compression standard).
+    pub fn family(&self) -> CodecFamily {
+        match self {
+            Codec::X264
+            | Codec::NvencH264
+            | Codec::QsvH264
+            | Codec::VideoToolboxH264
+            | Codec::VaapiH264
+            | Codec::AmfH264 => CodecFamily::H264,
+            Codec::X265
+            | Codec::NvencH265
+            | Codec::QsvH265
+            | Codec::VideoToolboxH265
+            | Codec::VaapiH265
+            | Codec::AmfH265 => CodecFamily::H265,
+            Codec::SvtAv1 => CodecFamily::Av1,
+        }
+    }
+
+    /// Whether this codec uses a hardware encoder backend.
+    pub fn is_hardware(&self) -> bool {
+        !matches!(self.backend(), EncoderBackend::Software)
+    }
+
+    /// Whether this codec is a software encoder.
+    pub fn is_software(&self) -> bool {
+        matches!(self.backend(), EncoderBackend::Software)
     }
 }
 
@@ -60,6 +180,21 @@ impl std::str::FromStr for Codec {
             "libx264" | "x264" | "h264" => Ok(Codec::X264),
             "libx265" | "x265" | "h265" | "hevc" => Ok(Codec::X265),
             "libsvtav1" | "svtav1" | "av1" => Ok(Codec::SvtAv1),
+            // NVENC
+            "h264_nvenc" | "nvenc" | "nvenc_h264" => Ok(Codec::NvencH264),
+            "hevc_nvenc" | "nvenc_h265" | "nvenc_hevc" => Ok(Codec::NvencH265),
+            // QuickSync
+            "h264_qsv" | "qsv" | "qsv_h264" => Ok(Codec::QsvH264),
+            "hevc_qsv" | "qsv_h265" | "qsv_hevc" => Ok(Codec::QsvH265),
+            // VideoToolbox
+            "h264_videotoolbox" | "vt" | "vt_h264" | "videotoolbox" => Ok(Codec::VideoToolboxH264),
+            "hevc_videotoolbox" | "vt_h265" | "vt_hevc" => Ok(Codec::VideoToolboxH265),
+            // VAAPI
+            "h264_vaapi" | "vaapi" | "vaapi_h264" => Ok(Codec::VaapiH264),
+            "hevc_vaapi" | "vaapi_h265" | "vaapi_hevc" => Ok(Codec::VaapiH265),
+            // AMF
+            "h264_amf" | "amf" | "amf_h264" => Ok(Codec::AmfH264),
+            "hevc_amf" | "amf_h265" | "amf_hevc" => Ok(Codec::AmfH265),
             _ => Err(anyhow::anyhow!("unknown codec: {s}")),
         }
     }
@@ -163,13 +298,18 @@ mod tests {
         assert_eq!(Codec::X264.as_str(), "libx264");
         assert_eq!(Codec::X265.as_str(), "libx265");
         assert_eq!(Codec::SvtAv1.as_str(), "libsvtav1");
+        assert_eq!(Codec::NvencH264.as_str(), "h264_nvenc");
+        assert_eq!(Codec::QsvH264.as_str(), "h264_qsv");
+        assert_eq!(Codec::VideoToolboxH264.as_str(), "h264_videotoolbox");
+        assert_eq!(Codec::VaapiH264.as_str(), "h264_vaapi");
+        assert_eq!(Codec::AmfH264.as_str(), "h264_amf");
+        assert_eq!(Codec::NvencH265.as_str(), "hevc_nvenc");
     }
 
     #[test]
     fn test_codec_display() {
         assert_eq!(format!("{}", Codec::X264), "libx264");
-        assert_eq!(format!("{}", Codec::X265), "libx265");
-        assert_eq!(format!("{}", Codec::SvtAv1), "libsvtav1");
+        assert_eq!(format!("{}", Codec::NvencH264), "h264_nvenc");
     }
 
     #[test]
@@ -184,12 +324,64 @@ mod tests {
         assert_eq!("libsvtav1".parse::<Codec>().unwrap(), Codec::SvtAv1);
         assert_eq!("svtav1".parse::<Codec>().unwrap(), Codec::SvtAv1);
         assert_eq!("av1".parse::<Codec>().unwrap(), Codec::SvtAv1);
+        assert_eq!("h264_nvenc".parse::<Codec>().unwrap(), Codec::NvencH264);
+        assert_eq!("nvenc".parse::<Codec>().unwrap(), Codec::NvencH264);
+        assert_eq!("hevc_nvenc".parse::<Codec>().unwrap(), Codec::NvencH265);
+        assert_eq!("h264_qsv".parse::<Codec>().unwrap(), Codec::QsvH264);
+        assert_eq!("qsv".parse::<Codec>().unwrap(), Codec::QsvH264);
+        assert_eq!("vt".parse::<Codec>().unwrap(), Codec::VideoToolboxH264);
+        assert_eq!("h264_vaapi".parse::<Codec>().unwrap(), Codec::VaapiH264);
+        assert_eq!("vaapi".parse::<Codec>().unwrap(), Codec::VaapiH264);
+        assert_eq!("h264_amf".parse::<Codec>().unwrap(), Codec::AmfH264);
+        assert_eq!("amf".parse::<Codec>().unwrap(), Codec::AmfH264);
         assert!("unknown".parse::<Codec>().is_err());
     }
 
     #[test]
+    fn test_codec_backend() {
+        assert_eq!(Codec::X264.backend(), EncoderBackend::Software);
+        assert_eq!(Codec::NvencH264.backend(), EncoderBackend::Nvenc);
+        assert_eq!(Codec::QsvH264.backend(), EncoderBackend::Qsv);
+        assert_eq!(Codec::VideoToolboxH264.backend(), EncoderBackend::VideoToolbox);
+        assert_eq!(Codec::VaapiH264.backend(), EncoderBackend::Vaapi);
+        assert_eq!(Codec::AmfH264.backend(), EncoderBackend::Amf);
+    }
+
+    #[test]
+    fn test_codec_family() {
+        assert_eq!(Codec::X264.family(), CodecFamily::H264);
+        assert_eq!(Codec::NvencH264.family(), CodecFamily::H264);
+        assert_eq!(Codec::X265.family(), CodecFamily::H265);
+        assert_eq!(Codec::NvencH265.family(), CodecFamily::H265);
+        assert_eq!(Codec::SvtAv1.family(), CodecFamily::Av1);
+    }
+
+    #[test]
+    fn test_codec_is_hardware() {
+        assert!(!Codec::X264.is_hardware());
+        assert!(!Codec::X265.is_hardware());
+        assert!(!Codec::SvtAv1.is_hardware());
+        assert!(Codec::NvencH264.is_hardware());
+        assert!(Codec::QsvH265.is_hardware());
+        assert!(Codec::VideoToolboxH264.is_hardware());
+    }
+
+    #[test]
+    fn test_codec_is_software() {
+        assert!(Codec::X264.is_software());
+        assert!(!Codec::NvencH264.is_software());
+    }
+
+    #[test]
     fn test_codec_serde_roundtrip() {
-        for codec in &[Codec::X264, Codec::X265, Codec::SvtAv1] {
+        for codec in &[
+            Codec::X264,
+            Codec::X265,
+            Codec::SvtAv1,
+            Codec::NvencH264,
+            Codec::NvencH265,
+            Codec::QsvH264,
+        ] {
             let json = serde_json::to_string(codec).unwrap();
             let back: Codec = serde_json::from_str(&json).unwrap();
             assert_eq!(*codec, back);
@@ -200,6 +392,7 @@ mod tests {
     fn test_codec_eq() {
         assert_eq!(Codec::X264, Codec::X264);
         assert_ne!(Codec::X264, Codec::X265);
+        assert_ne!(Codec::X264, Codec::NvencH264);
     }
 
     #[test]

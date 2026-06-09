@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use viser_encoding::clean_stale_temp_dirs;
-use viser_ffmpeg::{check_ffmpeg, check_ffprobe, validate_vmaf_model};
+use viser_ffmpeg::{check_ffmpeg, check_ffprobe, init_hw_encoders, validate_vmaf_model};
 
 #[derive(Parser)]
 #[command(
@@ -545,6 +545,16 @@ async fn main() -> anyhow::Result<()> {
             anyhow::bail!("{e}");
         }
     };
+
+    // Detect available hardware encoders
+    init_hw_encoders().await;
+    let hw_codecs = viser_ffmpeg::hw_encoders_available();
+    if !hw_codecs.is_empty() {
+        tracing::debug!(
+            "detected hardware encoders: {}",
+            hw_codecs.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", ")
+        );
+    }
 
     // Clean stale temp dirs
     clean_stale_temp_dirs(Duration::from_secs(24 * 3600));
