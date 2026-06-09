@@ -168,8 +168,8 @@ async fn fate_probe_multi_resolution() {
 
         let result = probe(&clip.to_string_lossy()).await.unwrap();
         let video = result.video_stream().unwrap();
-        assert_eq!(video.width, *width, "{}: width mismatch", label);
-        assert_eq!(video.height, *height, "{}: height mismatch", label);
+        assert_eq!(video.width, *width, "{label}: width mismatch");
+        assert_eq!(video.height, *height, "{label}: height mismatch");
     }
 }
 
