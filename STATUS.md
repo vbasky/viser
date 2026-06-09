@@ -10,10 +10,14 @@ commitment to a date.
 ## Status snapshot
 
 **Covered:** per-title convex-hull analysis, per-shot Trellis bit allocation,
-VMAF/PSNR/SSIM quality measurement, shot detection (scdet, PySceneDetect,
-TransNetV2), capped-CRF and CBR encoding, checkpoint/resume, content-adaptive
-encoding profiles, segment-level CRF tuning, comparison player, hardware
-encoder support (NVENC, QuickSync, VideoToolbox, VAAPI, AMF — H.264/H.265).
+segment-level CRF tuning, content-adaptive encoding profiles, shot detection
+(FFmpeg scdet), CRF / capped-CRF / fixed-QP / two-pass VBR encoding,
+checkpoint/resume, audio-bitrate-aware ladder budgets, screen-content
+detection, an optional pure-Rust probe engine (`revelo`), a broad quality-
+metric suite (VMAF, PSNR, SSIM, MS-SSIM, VIF, XPSNR, CAMBI, SSIMULACRA2,
+butteraugli + no-reference signals) with metric-vs-metric comparison, the
+comparison player, and hardware encoder support (NVENC, QuickSync,
+VideoToolbox, VAAPI, AMF — H.264/H.265).
 
 **Not covered:** see tiers below.
 
@@ -26,26 +30,23 @@ encoder support (NVENC, QuickSync, VideoToolbox, VAAPI, AMF — H.264/H.265).
       against the libvmaf catalog.
 - [x] **FFmpeg version detection.** Validate minimum FFmpeg/libvmaf versions at
       startup and surface clear errors instead of cryptic encode failures.
-- [ ] **Core algorithm tests.** Convex hull, BD-rate, Trellis allocation, and
-      shot boundary detection are numerically tricky — property-based tests
-      would catch regressions early.
-- [ ] **Integration tests.** End-to-end `per-title analyze` + `per-title deliver`
-      on a known reference clip with expected output.
-- [ ] **VMAF model validation.** Check that the VMAF model file exists and is
-      readable before starting encodes — currently fails mid-run.
-- [ ] **FFmpeg version detection.** Validate minimum FFmpeg/libvmaf versions at
-      startup and surface clear errors instead of cryptic encode failures.
+- [x] **Core algorithm tests.** Convex hull, BD-rate, Trellis allocation, and
+      ladder selection are covered by a 170+ test suite, plus property-based
+      (`proptest`) invariant tests for the convex hull and ladder selection.
+- [x] **Integration tests.** FATE-style end-to-end tests generate synthetic
+      media with `ffmpeg -f lavfi` and exercise the full probe → encode →
+      measure pipeline against real ffmpeg/ffprobe.
 - [ ] **10-bit pipeline correctness.** Verify that 10-bit content is correctly
       detected, warned about, and that VMAF scores account for bit depth
       differences between reference and distorted.
 
 ## P1 — highest-value features
 
-- [ ] **Metric-by-metric comparison (MSU VQMT-class report).** Run the full
+- [x] **Metric-by-metric comparison (MSU VQMT-class report).** Run the full
       metric suite on the same content and compare the *metrics against each
       other* — not just rank encodes — surfacing where PSNR and the perceptual
-      metrics disagree. Most building blocks already exist; what remains is the
-      unified report and a CLI surface.
+      metrics disagree. Shipped via `viser metrics compare` with a unified
+      per-metric report and an agreement matrix; sub-items below.
   - [x] Per-component PSNR (Y/U/V + weighted `(6·Y + U + V) / 8`) in
         `viser-quality`.
   - [x] Pooling beyond the arithmetic mean — harmonic mean, p1/p5/p10, median,
@@ -72,8 +73,9 @@ encoder support (NVENC, QuickSync, VideoToolbox, VAAPI, AMF — H.264/H.265).
         `xpsnr` filter (a separate pass; under `--all`).
   - [x] **CAMBI** — Netflix's banding detector via libvmaf's `cambi` feature
         (lower is better; oriented "up" in the agreement matrix).
-- [ ] **Two-pass VBR encoding.** CRF-only trial encodes today; ladders output
-      CRF values but don't map to VBR bitrates for production.
+- [x] **Two-pass VBR encoding.** `RateControlMode::Vbr` runs a two-pass encode
+      against a target bitrate (`encode_two_pass`), alongside CRF, capped-CRF,
+      and fixed-QP modes; per-title delivery maps saved analyses to VBR rungs.
 - [ ] **HDR support (proper).** PQ/HLG handling, HDR-aware VMAF models. Current
       HDR detection gates behind `--allow-hdr` but VMAF scores are SDR-only.
 - [ ] **Chunked/segmented encoding.** Distribute encodes across machines for
@@ -87,7 +89,8 @@ encoder support (NVENC, QuickSync, VideoToolbox, VAAPI, AMF — H.264/H.265).
 - [ ] **Differentiators beyond MSU VQMT parity.** Builds on the metric-
       comparison work in P1, but reaches past what MSU/psy-ex/ffmpeg-quality-
       metrics offer. Higher effort and lower certainty than the parity tiers —
-      grouped here deliberately. None of this exists yet.
+      grouped here deliberately. Mostly unbuilt — only the no-reference signal
+      set has landed so far.
   - [~] **No-reference metrics.** `metrics no-ref` scores files with no pristine
         source. Done: a pure-Rust, model-free signal set — sharpness (variance
         of Laplacian), 8×8 blockiness, and Immerkær noise — in
@@ -149,13 +152,19 @@ encoder support (NVENC, QuickSync, VideoToolbox, VAAPI, AMF — H.264/H.265).
       measures spatial/temporal entropy but doesn't feed into prediction yet.
 - [ ] **Streaming manifest output.** HLS/DASH playlist generation from ladder
       results.
-- [ ] **Audio bitrate optimization.** Audio/video bitrate split in ladder budgets.
-- [ ] **Screen content detection.** Slides, code, UI captures need different
-      encoding strategies.
+- [x] **Audio bitrate optimization.** Per-title analysis extracts source audio
+      bitrate (`audio_bitrate_kbps`) and reserves it in the delivery budget, so
+      ladder rungs are sized against the video budget alone.
+- [x] **Screen content detection.** `viser-complexity::detect_screen_content`
+      classifies content as natural vs. screen (slides, code, UI) from
+      spatial/temporal/DCT heuristics. (Detection only — not yet used to switch
+      encoding strategy automatically.)
 
 ## P3 — quality of life
 
-- [ ] **Charts in CLI.** `viser-chart` crate exists but isn't wired into the CLI.
+- [~] **Charts in CLI.** `per-title analyze --charts <dir>` emits charts via
+      `viser-chart`; still missing a dedicated `chart` subcommand and chart
+      output for the other analysis modes.
 - [ ] **Cost-aware optimization.** Storage + CDN delivery costs factored into
       ladder selection.
 - [ ] **ABR logic integration.** Ladder selection tuned for client switching
