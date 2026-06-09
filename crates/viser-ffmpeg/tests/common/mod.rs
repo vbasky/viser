@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Ensure ffmpeg and ffprobe are on PATH. Returns an error string if not.
-pub fn check_ffmpeg() -> Result<(), String> {
+/// Returns `true` if ffmpeg and ffprobe are on PATH.
+pub fn has_ffmpeg() -> bool {
     for bin in &["ffmpeg", "ffprobe"] {
         let status = Command::new(bin)
             .arg("-version")
@@ -11,10 +11,10 @@ pub fn check_ffmpeg() -> Result<(), String> {
             .status();
         match status {
             Ok(s) if s.success() => {}
-            _ => return Err(format!("{bin} not found on PATH — skipping integration tests")),
+            _ => return false,
         }
     }
-    Ok(())
+    true
 }
 
 /// Generate a synthetic test video clip using ffmpeg's lavfi source.

@@ -1,12 +1,14 @@
 mod common;
 
-use common::{check_ffmpeg, generate_reference_clip, generate_test_clip};
+use common::{generate_reference_clip, generate_test_clip, has_ffmpeg};
 use tokio::sync::mpsc;
 use viser_ffmpeg::{Codec, EncodeJob, RateControlMode, Resolution, concat, encode, extract, probe};
 
 #[tokio::test]
 async fn fate_encode_x264_crf_produces_output() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_crf.mp4", "640x360", 2, 24, "libx264");
@@ -39,7 +41,9 @@ async fn fate_encode_x264_crf_produces_output() {
 
 #[tokio::test]
 async fn fate_encode_x265_crf() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_x265.mp4", "640x360", 1, 24, "libx264");
@@ -70,7 +74,9 @@ async fn fate_encode_x265_crf() {
 
 #[tokio::test]
 async fn fate_encode_with_resolution_scaling() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_scale.mp4", "1280x720", 1, 24, "libx264");
@@ -99,7 +105,9 @@ async fn fate_encode_with_resolution_scaling() {
 
 #[tokio::test]
 async fn fate_encode_crf_higher_produces_smaller_file() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_compare.mp4", "640x360", 2, 24, "libx264");
@@ -141,7 +149,9 @@ async fn fate_encode_crf_higher_produces_smaller_file() {
 
 #[tokio::test]
 async fn fate_encode_progress_reporting() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_prog.mp4", "640x360", 2, 24, "libx264");
@@ -179,7 +189,9 @@ async fn fate_encode_progress_reporting() {
 
 #[tokio::test]
 async fn fate_extract_segment() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_extract.mp4", "1280x720", 3, 30, "libx264");
@@ -204,7 +216,9 @@ async fn fate_extract_segment() {
 
 #[tokio::test]
 async fn fate_extract_segment_preserves_codec() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_copy.mp4", "640x360", 3, 24, "libx264");
@@ -224,7 +238,9 @@ async fn fate_extract_segment_preserves_codec() {
 
 #[tokio::test]
 async fn fate_concat_multiple_segments() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_concat.mp4", "320x240", 3, 30, "libx264");
@@ -248,7 +264,9 @@ async fn fate_concat_multiple_segments() {
 
 #[tokio::test]
 async fn fate_concat_empty_input_list_errors() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let output = tmp.path().join("empty_concat.mp4");
@@ -258,7 +276,9 @@ async fn fate_concat_empty_input_list_errors() {
 
 #[tokio::test]
 async fn fate_encode_error_on_nonexistent_input() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let job = EncodeJob {
@@ -281,7 +301,9 @@ async fn fate_encode_error_on_nonexistent_input() {
 
 #[tokio::test]
 async fn fate_encode_crf_zero_produces_large_file() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_q0.mp4", "320x240", 1, 24, "libx264");
@@ -307,7 +329,9 @@ async fn fate_encode_crf_zero_produces_large_file() {
 
 #[tokio::test]
 async fn fate_encode_x264_qp() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_qp.mp4", "640x360", 1, 24, "libx264");
@@ -334,7 +358,9 @@ async fn fate_encode_x264_qp() {
 
 #[tokio::test]
 async fn fate_encode_capped_crf() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_capped.mp4", "640x360", 1, 24, "libx264");
@@ -365,7 +391,9 @@ async fn fate_encode_capped_crf() {
 
 #[tokio::test]
 async fn fate_encode_preserves_no_audio() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_noaud.mp4", "640x360", 1, 24, "libx264");
@@ -392,7 +420,9 @@ async fn fate_encode_preserves_no_audio() {
 
 #[tokio::test]
 async fn fate_encode_with_extra_args() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_test_clip(tmp.path(), "input_extra.mp4", "640x360", 1, 24, "libx264");
@@ -419,7 +449,9 @@ async fn fate_encode_with_extra_args() {
 
 #[tokio::test]
 async fn fate_encode_reference_then_distorted_quality_check() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let input = generate_reference_clip(tmp.path(), "ref_lossless.mp4", "640x360", 2);

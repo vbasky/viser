@@ -1,11 +1,13 @@
 mod common;
 
-use common::{check_ffmpeg, generate_hdr_clip, generate_test_clip};
+use common::{generate_hdr_clip, generate_test_clip, has_ffmpeg};
 use viser_ffmpeg::{ProbeCache, ProbeEngine, probe};
 
 #[tokio::test]
 async fn fate_probe_resolution_and_codec() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let clip = generate_test_clip(tmp.path(), "test_720p.mp4", "1280x720", 2, 30, "libx264");
@@ -21,7 +23,9 @@ async fn fate_probe_resolution_and_codec() {
 
 #[tokio::test]
 async fn fate_probe_duration() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let clip = generate_test_clip(tmp.path(), "dur_test.mp4", "320x240", 2, 25, "libx264");
@@ -34,7 +38,9 @@ async fn fate_probe_duration() {
 
 #[tokio::test]
 async fn fate_probe_file_size() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let clip = generate_test_clip(tmp.path(), "size_test.mp4", "640x360", 1, 24, "libx264");
@@ -47,7 +53,9 @@ async fn fate_probe_file_size() {
 
 #[tokio::test]
 async fn fate_probe_audio_stream() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let clip = generate_test_clip(tmp.path(), "audio_test.mp4", "320x240", 2, 25, "libx264");
@@ -60,7 +68,9 @@ async fn fate_probe_audio_stream() {
 
 #[tokio::test]
 async fn fate_probe_format_name() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let clip = generate_test_clip(tmp.path(), "fmt_test.mp4", "320x240", 1, 24, "libx264");
@@ -76,7 +86,9 @@ async fn fate_probe_format_name() {
 
 #[tokio::test]
 async fn fate_probe_hdr_detection() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let clip = generate_hdr_clip(tmp.path());
@@ -88,7 +100,9 @@ async fn fate_probe_hdr_detection() {
 
 #[tokio::test]
 async fn fate_probe_sdr_not_hdr() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let clip = generate_test_clip(tmp.path(), "sdr_test.mp4", "1280x720", 2, 30, "libx264");
@@ -101,7 +115,9 @@ async fn fate_probe_sdr_not_hdr() {
 
 #[tokio::test]
 async fn fate_probe_cache_deduplication() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let clip = generate_test_clip(tmp.path(), "cache_test.mp4", "640x360", 1, 24, "libx264");
@@ -119,7 +135,9 @@ async fn fate_probe_cache_deduplication() {
 
 #[tokio::test]
 async fn fate_probe_probe_engine_default() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let clip = generate_test_clip(tmp.path(), "engine_test.mp4", "320x240", 1, 24, "libx264");
@@ -131,7 +149,9 @@ async fn fate_probe_probe_engine_default() {
 
 #[tokio::test]
 async fn fate_probe_multi_resolution() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     for (label, width, height) in
         &[("360p", 640, 360), ("480p", 854, 480), ("720p", 1280, 720), ("1080p", 1920, 1080)]
@@ -155,7 +175,9 @@ async fn fate_probe_multi_resolution() {
 
 #[tokio::test]
 async fn fate_probe_returns_error_for_missing_file() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let result = probe("/nonexistent/file_that_does_not_exist_12345.mp4").await;
     assert!(result.is_err(), "probing nonexistent file should error");
@@ -163,7 +185,9 @@ async fn fate_probe_returns_error_for_missing_file() {
 
 #[tokio::test]
 async fn fate_probe_frame_rate_parsing() {
-    check_ffmpeg().expect("ffmpeg required");
+    if !has_ffmpeg() {
+        return;
+    }
 
     let tmp = tempfile::tempdir().unwrap();
     let clip = generate_test_clip(tmp.path(), "fps24.mp4", "640x360", 1, 24, "libx264");
