@@ -125,7 +125,20 @@ jobs:
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev cmake
 
+      - name: Check if version is already published
+        id: check
+        run: |
+          version="${VERSION#v}"
+          status=$(curl -s -o /dev/null -w "%{http_code}" "https://crates.io/api/v1/crates/viser-ffmpeg/${version}")
+          if [[ "$status" == "200" ]]; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "==> viser-ffmpeg ${version} already on crates.io — skipping publish"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish crates in dependency order
+        if: steps.check.outputs.already_published != 'true'
         shell: bash
         run: |
           set -euo pipefail
