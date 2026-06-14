@@ -25,6 +25,7 @@ async fn fate_encode_x264_crf_produces_output() {
         max_bitrate: 0.0,
         bufsize: 0.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec![],
     };
 
@@ -60,6 +61,7 @@ async fn fate_encode_x265_crf() {
         max_bitrate: 0.0,
         bufsize: 0.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec![],
     };
 
@@ -93,6 +95,7 @@ async fn fate_encode_with_resolution_scaling() {
         max_bitrate: 0.0,
         bufsize: 0.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec![],
     };
 
@@ -126,6 +129,7 @@ async fn fate_encode_crf_higher_produces_smaller_file() {
             max_bitrate: 0.0,
             bufsize: 0.0,
             preset: "ultrafast".into(),
+            hwaccel: None,
             extra_args: vec![],
         };
         let result = encode(job, None).await.unwrap();
@@ -170,6 +174,7 @@ async fn fate_encode_progress_reporting() {
         max_bitrate: 0.0,
         bufsize: 0.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec![],
     };
 
@@ -292,6 +297,7 @@ async fn fate_encode_error_on_nonexistent_input() {
         max_bitrate: 0.0,
         bufsize: 0.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec![],
     };
 
@@ -320,6 +326,7 @@ async fn fate_encode_crf_zero_produces_large_file() {
         max_bitrate: 0.0,
         bufsize: 0.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec![],
     };
 
@@ -348,6 +355,7 @@ async fn fate_encode_x264_qp() {
         max_bitrate: 0.0,
         bufsize: 0.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec![],
     };
 
@@ -377,6 +385,7 @@ async fn fate_encode_capped_crf() {
         max_bitrate: 2000.0,
         bufsize: 4000.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec![],
     };
 
@@ -410,6 +419,7 @@ async fn fate_encode_preserves_no_audio() {
         max_bitrate: 0.0,
         bufsize: 0.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec![],
     };
 
@@ -439,6 +449,7 @@ async fn fate_encode_with_extra_args() {
         max_bitrate: 0.0,
         bufsize: 0.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec!["-g".into(), "30".into()],
     };
 
@@ -468,6 +479,7 @@ async fn fate_encode_reference_then_distorted_quality_check() {
         max_bitrate: 0.0,
         bufsize: 0.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec![],
     };
 

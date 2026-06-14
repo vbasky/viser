@@ -1,6 +1,6 @@
 [package]
 name = "viser-cli"
-version = "0.6.1"
+version = "0.7.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -21,21 +21,21 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.6.1" }
-viser-hull = { path = "../viser-hull", version = "0.6.1" }
-viser-ladder = { path = "../viser-ladder", version = "0.6.1" }
-viser-quality = { path = "../viser-quality", version = "0.6.1" }
-viser-metrics = { path = "../viser-metrics", version = "0.6.1" }
-viser-encoding = { path = "../viser-encoding", version = "0.6.1" }
-viser-pertitle = { path = "../viser-pertitle", version = "0.6.1" }
-viser-pershot = { path = "../viser-pershot", version = "0.6.1" }
-viser-persegment = { path = "../viser-persegment", version = "0.6.1" }
-viser-contextaware = { path = "../viser-contextaware", version = "0.6.1" }
-viser-compare = { path = "../viser-compare", version = "0.6.1" }
-viser-chart = { path = "../viser-chart", version = "0.6.1" }
-viser-shot = { path = "../viser-shot", version = "0.6.1" }
-viser-complexity = { path = "../viser-complexity", version = "0.6.1" }
-viser-checkpoint = { path = "../viser-checkpoint", version = "0.6.1" }
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.7.0" }
+viser-hull = { path = "../viser-hull", version = "0.7.0" }
+viser-ladder = { path = "../viser-ladder", version = "0.7.0" }
+viser-quality = { path = "../viser-quality", version = "0.7.0" }
+viser-metrics = { path = "../viser-metrics", version = "0.7.0" }
+viser-encoding = { path = "../viser-encoding", version = "0.7.0" }
+viser-pertitle = { path = "../viser-pertitle", version = "0.7.0" }
+viser-pershot = { path = "../viser-pershot", version = "0.7.0" }
+viser-persegment = { path = "../viser-persegment", version = "0.7.0" }
+viser-contextaware = { path = "../viser-contextaware", version = "0.7.0" }
+viser-compare = { path = "../viser-compare", version = "0.7.0" }
+viser-chart = { path = "../viser-chart", version = "0.7.0" }
+viser-shot = { path = "../viser-shot", version = "0.7.0" }
+viser-complexity = { path = "../viser-complexity", version = "0.7.0" }
+viser-checkpoint = { path = "../viser-checkpoint", version = "0.7.0" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

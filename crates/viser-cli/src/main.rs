@@ -114,6 +114,10 @@ struct EncodeArgs {
     /// Output height (0 = keep original)
     #[arg(long, default_value_t = 0)]
     height: i32,
+    /// Hardware-accelerated decode (e.g. vaapi, cuda, qsv, videotoolbox).
+    /// Omit for software decode.
+    #[arg(long)]
+    hwaccel: Option<String>,
 }
 
 // ── Inspect ──
@@ -556,6 +560,13 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Detect available hardware decode methods
+    viser_ffmpeg::init_hw_decoders().await;
+    let hw_decoders = viser_ffmpeg::hw_decoders_available();
+    if !hw_decoders.is_empty() {
+        tracing::debug!("detected hardware decoders: {}", hw_decoders.join(", "));
+    }
+
     // Clean stale temp dirs
     clean_stale_temp_dirs(Duration::from_secs(24 * 3600));
 
@@ -606,6 +617,22 @@ async fn main() -> anyhow::Result<()> {
 
 async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
     let codec: viser_ffmpeg::Codec = args.codec.parse()?;
+
+    // Warn (don't fail) if the requested decode method wasn't detected — probing
+    // can be conservative and the encode will surface a hard error if it's truly
+    // unavailable.
+    if let Some(accel) = args.hwaccel.as_deref().filter(|a| !a.is_empty())
+        && !viser_ffmpeg::is_hw_decoder_available(accel)
+    {
+        let available = viser_ffmpeg::hw_decoders_available();
+        let hint = if available.is_empty() {
+            "no hardware decode methods detected".to_string()
+        } else {
+            format!("detected: {}", available.join(", "))
+        };
+        eprintln!("warning: hwaccel '{accel}' not detected ({hint}); attempting anyway");
+    }
+
     let rate_control = match normalize_mode(&args.mode).as_str() {
         "crf" => viser_ffmpeg::RateControlMode::Crf,
         "capped-crf" => viser_ffmpeg::RateControlMode::CappedCrf,
@@ -655,6 +682,7 @@ async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
         max_bitrate,
         bufsize,
         preset: args.preset,
+        hwaccel: args.hwaccel,
         extra_args: vec![],
     };
 
@@ -1846,6 +1874,7 @@ fn build_delivery_encode_job(
         max_bitrate,
         bufsize,
         preset: viser_encoding::preset_for_codec(job.rung.point.codec, preset),
+        hwaccel: None,
         extra_args,
     }
 }

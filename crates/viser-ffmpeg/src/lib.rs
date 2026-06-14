@@ -74,6 +74,21 @@ pub enum Codec {
     /// AMD AMF HEVC (`hevc_amf`).
     #[serde(rename = "hevc_amf")]
     AmfH265,
+
+    // ── Hardware encoders (AV1) ──
+    // Apple VideoToolbox has no AV1 encoder, so there is no `av1_videotoolbox`.
+    /// NVIDIA NVENC AV1 (`av1_nvenc`) — Ada/Blackwell and newer.
+    #[serde(rename = "av1_nvenc")]
+    NvencAv1,
+    /// Intel QuickSync AV1 (`av1_qsv`) — Arc/Battlemage and newer.
+    #[serde(rename = "av1_qsv")]
+    QsvAv1,
+    /// Linux VAAPI AV1 (`av1_vaapi`) — Arc/Battlemage, RDNA3+ and newer.
+    #[serde(rename = "av1_vaapi")]
+    VaapiAv1,
+    /// AMD AMF AV1 (`av1_amf`) — RDNA3+ and newer.
+    #[serde(rename = "av1_amf")]
+    AmfAv1,
 }
 
 /// Hardware encoder backend (GPU vendor / API).
@@ -121,6 +136,10 @@ impl Codec {
             Codec::VideoToolboxH265 => "hevc_videotoolbox",
             Codec::VaapiH265 => "hevc_vaapi",
             Codec::AmfH265 => "hevc_amf",
+            Codec::NvencAv1 => "av1_nvenc",
+            Codec::QsvAv1 => "av1_qsv",
+            Codec::VaapiAv1 => "av1_vaapi",
+            Codec::AmfAv1 => "av1_amf",
         }
     }
 
@@ -128,11 +147,11 @@ impl Codec {
     pub fn backend(&self) -> EncoderBackend {
         match self {
             Codec::X264 | Codec::X265 | Codec::SvtAv1 => EncoderBackend::Software,
-            Codec::NvencH264 | Codec::NvencH265 => EncoderBackend::Nvenc,
-            Codec::QsvH264 | Codec::QsvH265 => EncoderBackend::Qsv,
+            Codec::NvencH264 | Codec::NvencH265 | Codec::NvencAv1 => EncoderBackend::Nvenc,
+            Codec::QsvH264 | Codec::QsvH265 | Codec::QsvAv1 => EncoderBackend::Qsv,
             Codec::VideoToolboxH264 | Codec::VideoToolboxH265 => EncoderBackend::VideoToolbox,
-            Codec::VaapiH264 | Codec::VaapiH265 => EncoderBackend::Vaapi,
-            Codec::AmfH264 | Codec::AmfH265 => EncoderBackend::Amf,
+            Codec::VaapiH264 | Codec::VaapiH265 | Codec::VaapiAv1 => EncoderBackend::Vaapi,
+            Codec::AmfH264 | Codec::AmfH265 | Codec::AmfAv1 => EncoderBackend::Amf,
         }
     }
 
@@ -151,7 +170,9 @@ impl Codec {
             | Codec::VideoToolboxH265
             | Codec::VaapiH265
             | Codec::AmfH265 => CodecFamily::H265,
-            Codec::SvtAv1 => CodecFamily::Av1,
+            Codec::SvtAv1 | Codec::NvencAv1 | Codec::QsvAv1 | Codec::VaapiAv1 | Codec::AmfAv1 => {
+                CodecFamily::Av1
+            }
         }
     }
 
@@ -195,6 +216,11 @@ impl std::str::FromStr for Codec {
             // AMF
             "h264_amf" | "amf" | "amf_h264" => Ok(Codec::AmfH264),
             "hevc_amf" | "amf_h265" | "amf_hevc" => Ok(Codec::AmfH265),
+            // AV1 hardware
+            "av1_nvenc" | "nvenc_av1" => Ok(Codec::NvencAv1),
+            "av1_qsv" | "qsv_av1" => Ok(Codec::QsvAv1),
+            "av1_vaapi" | "vaapi_av1" => Ok(Codec::VaapiAv1),
+            "av1_amf" | "amf_av1" => Ok(Codec::AmfAv1),
             _ => Err(anyhow::anyhow!("unknown codec: {s}")),
         }
     }
@@ -386,6 +412,35 @@ mod tests {
             let back: Codec = serde_json::from_str(&json).unwrap();
             assert_eq!(*codec, back);
         }
+    }
+
+    #[test]
+    fn test_av1_hw_codec_as_str() {
+        assert_eq!(Codec::NvencAv1.as_str(), "av1_nvenc");
+        assert_eq!(Codec::QsvAv1.as_str(), "av1_qsv");
+        assert_eq!(Codec::VaapiAv1.as_str(), "av1_vaapi");
+        assert_eq!(Codec::AmfAv1.as_str(), "av1_amf");
+    }
+
+    #[test]
+    fn test_av1_hw_codec_from_str() {
+        assert_eq!("av1_nvenc".parse::<Codec>().unwrap(), Codec::NvencAv1);
+        assert_eq!("nvenc_av1".parse::<Codec>().unwrap(), Codec::NvencAv1);
+        assert_eq!("av1_qsv".parse::<Codec>().unwrap(), Codec::QsvAv1);
+        assert_eq!("av1_vaapi".parse::<Codec>().unwrap(), Codec::VaapiAv1);
+        assert_eq!("av1_amf".parse::<Codec>().unwrap(), Codec::AmfAv1);
+    }
+
+    #[test]
+    fn test_av1_hw_codec_backend_and_family() {
+        for codec in &[Codec::NvencAv1, Codec::QsvAv1, Codec::VaapiAv1, Codec::AmfAv1] {
+            assert_eq!(codec.family(), CodecFamily::Av1);
+            assert!(codec.is_hardware());
+        }
+        assert_eq!(Codec::NvencAv1.backend(), EncoderBackend::Nvenc);
+        assert_eq!(Codec::QsvAv1.backend(), EncoderBackend::Qsv);
+        assert_eq!(Codec::VaapiAv1.backend(), EncoderBackend::Vaapi);
+        assert_eq!(Codec::AmfAv1.backend(), EncoderBackend::Amf);
     }
 
     #[test]

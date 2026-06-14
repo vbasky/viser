@@ -174,6 +174,7 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
                     target_bitrate: 0.0,
                     max_bitrate: 0.0,
                     bufsize: 0.0,
+                    hwaccel: None,
                     extra_args: vec![],
                 };
 

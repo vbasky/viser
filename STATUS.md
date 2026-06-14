@@ -119,33 +119,44 @@ VideoToolbox, VAAPI, AMF — H.264/H.265).
         if landed. See the FFmpeg-independence notes below.
   - [ ] **HDR-aware metric variants.** PQ/HLG-correct scoring across the suite;
         depends on and extends the **HDR support (proper)** item in P1.
-- [x] **Hardware encoder support.** NVENC, QuickSync, VideoToolbox, VAAPI, AMF
-      integration for GPU-accelerated encodes (H.264/H.265 only — AV1 HW is
-      out of scope). Shipped in 0.6.0:
+- [x] **Hardware encode/decode matrix.** NVENC, QuickSync, VideoToolbox, VAAPI,
+      AMF integration for GPU-accelerated encodes across H.264, H.265, and AV1,
+      plus hardware-accelerated decode. Shipped in 0.6.0 (H.264/H.265 encode),
+      completed in 0.7.0 (AV1 encode row + VAAPI surface plumbing + decode axis):
 
-  - [x] *Runtime detection.* `ffmpeg -encoders` probed at CLI startup; available
-        hardware encoders cached in a `OnceLock<HashSet<Codec>>`.
-  - [x] *Codec enum.* Extended from 3 to 13 variants: 3 SW + 10 HW (5 backends
-        × H.264/H.265). Added `EncoderBackend`, `CodecFamily`, `backends()`,
+  - [x] *Runtime detection.* `ffmpeg -encoders` and `ffmpeg -hwaccels` probed at
+        CLI startup; available encoders/decoders cached in `OnceLock` sets.
+  - [x] *Codec enum.* 17 variants: 3 SW + 14 HW. H.264/H.265 across all 5
+        backends, plus AV1 across NVENC/QSV/VAAPI/AMF (no `av1_videotoolbox` —
+        Apple has no AV1 encoder). `EncoderBackend`, `CodecFamily`, `backend()`,
         `family()`, `is_hardware()`, `is_software()`.
   - [x] *Rate-control dispatch.* `build_sw_args()` / `build_hw_args()` in
         `viser-ffmpeg/src/encode.rs` with per-backend rate-control flags
         (NVENC `-cq -rc constqp`, QSV `-global_quality`, VideoToolbox
-        `-quality`, VAAPI `-global_quality`, AMF `-qp_i / -qp_p`).
+        `-quality`, VAAPI `-global_quality`, AMF `-qp_i / -qp_p`). Backend-keyed,
+        so the AV1 row reuses the existing dispatch.
+  - [x] *VAAPI surface plumbing.* `-vaapi_device` initialised before `-i`
+        (overridable via `VISER_VAAPI_DEVICE`), and a unified `-vf` filter chain
+        appends `format=nv12,hwupload` so the encoder receives VAAPI surfaces.
+  - [x] *Hardware decode.* `EncodeJob.hwaccel` injects `-hwaccel <method>` before
+        the input (frames downloaded to system memory, keeping the SW filter
+        pipeline intact). `encode --hwaccel` flag; detection via `-hwaccels`.
   - [x] *Preset mapping.* NVENC `p1`-`p7`, QSV passthrough, VAAPI
         `compression_level` 1-5, AMF `speed/balanced/quality`, in
         `viser-encoding/src/lib.rs`.
   - [x] *CLI integration.* All commands (`per-title analyze`, `per-title
         deliver`, `per-shot analyze`, `per-segment analyze`, `encode`) accept
         HW codec names and aliases (`nvenc`, `qsv`, `vt`, `vaapi`, `amf`,
-        `videotoolbox`).
-  - [x] *Chart labels.* `viser-chart` maps all 10 HW encoder names to
-        human-readable labels (e.g., `h264_nvenc` → `H.264 (NVENC)`).
+        `videotoolbox`, plus `av1_nvenc` / `av1_qsv` / `av1_vaapi` / `av1_amf`).
+  - [x] *Chart labels.* `viser-chart` maps all 14 HW encoder names to
+        human-readable labels (e.g., `h264_nvenc` → `H.264 (NVENC)`,
+        `av1_vaapi` → `AV1 (VAAPI)`).
 
-  **Scope boundary.** No AV1 hardware encoders — out of scope for viser.
-  No native FFI bindings — all HW encoding goes through
-  the FFmpeg subprocess. GPU-accelerated VMAF remains deferred (libvmaf is
-  CPU-only; no viable GPU path exists).
+  **Scope boundary.** No native FFI bindings — all HW encode/decode goes through
+  the FFmpeg subprocess. AV1 HW encode requires recent silicon (Arc/Battlemage,
+  Ada/Blackwell, RDNA3+) and is validated at the argument level; real-GPU
+  validation needs hardware in CI. GPU-accelerated VMAF remains deferred
+  (libvmaf is CPU-only; no viable GPU path exists).
 - [ ] **VP9 codec support.** Currently only H.264, H.265, and AV1.
 - [ ] **ML-based ladder prediction.** Feature extraction from source to predict
       ladders without trial encodes (Bitmovin/Mux-style). `viser-complexity`

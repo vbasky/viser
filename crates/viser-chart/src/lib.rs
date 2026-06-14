@@ -343,6 +343,10 @@ pub fn short_codec_name(codec: &str) -> &str {
         "hevc_videotoolbox" => "H.265 (VT)",
         "hevc_vaapi" => "H.265 (VAAPI)",
         "hevc_amf" => "H.265 (AMF)",
+        "av1_nvenc" => "AV1 (NVENC)",
+        "av1_qsv" => "AV1 (QSV)",
+        "av1_vaapi" => "AV1 (VAAPI)",
+        "av1_amf" => "AV1 (AMF)",
         _ => codec,
     }
 }

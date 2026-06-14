@@ -1,4 +1,31 @@
 # Changelog
+## [0.7.0] - 2026-06-15
+
+Completes the hardware encode/decode matrix.
+
+### Added
+
+- **AV1 hardware encoders** — completes the encode matrix: `av1_nvenc`, `av1_qsv`,
+  `av1_vaapi`, `av1_amf` (no `av1_videotoolbox` — Apple ships no AV1 encoder).
+  Requires recent silicon (Arc/Battlemage, Ada/Blackwell, RDNA3+). Selectable by
+  name/alias across all analysis and encode commands.
+- **Hardware-accelerated decode** — `EncodeJob.hwaccel` and the `encode --hwaccel`
+  flag inject `-hwaccel <method>` (e.g. `vaapi`, `cuda`, `qsv`, `videotoolbox`)
+  before the input; available methods are detected via `ffmpeg -hwaccels` at startup.
+
+### Fixed
+
+- **VAAPI encode surface plumbing** — VAAPI encoders (`h264_vaapi`, `hevc_vaapi`,
+  `av1_vaapi`) now initialise a render device (`-vaapi_device`, overridable via
+  `VISER_VAAPI_DEVICE`) and upload frames to GPU surfaces (`format=nv12,hwupload`)
+  via a unified `-vf` filter chain. Previously VAAPI encodes were emitted with
+  software frames and would fail on real hardware.
+
+### Changed
+
+- **`EncodeJob` gained a `hwaccel: Option<String>` field** (breaking for
+  struct-literal construction).
+
 ## [0.6.1] - 2026-06-09
 
 ### Fixed

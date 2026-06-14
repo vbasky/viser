@@ -16,6 +16,10 @@ static HW_ENCODERS_SEARCH: &[(Codec, &str)] = &[
     (Codec::VaapiH265, "hevc_vaapi"),
     (Codec::AmfH264, "h264_amf"),
     (Codec::AmfH265, "hevc_amf"),
+    (Codec::NvencAv1, "av1_nvenc"),
+    (Codec::QsvAv1, "av1_qsv"),
+    (Codec::VaapiAv1, "av1_vaapi"),
+    (Codec::AmfAv1, "av1_amf"),
 ];
 
 async fn probe_available_encoders() -> HashSet<String> {
@@ -77,6 +81,66 @@ pub fn list_hw_encoder_names() -> Vec<&'static str> {
     HW_ENCODERS_SEARCH.iter().map(|(_, name)| *name).collect()
 }
 
+// ── Hardware decode detection ──
+
+static HW_DECODERS_CACHE: OnceLock<HashSet<String>> = OnceLock::new();
+
+/// Hardware-accelerated decode methods viser knows how to drive, in preference
+/// order. These map to FFmpeg `-hwaccel <name>` values.
+static HW_DECODE_METHODS: &[&str] =
+    &["cuda", "qsv", "vaapi", "videotoolbox", "d3d11va", "dxva2", "vdpau"];
+
+async fn probe_available_hwaccels() -> HashSet<String> {
+    let result = Command::new(ffmpeg_path()).args(["-hide_banner", "-hwaccels"]).output().await;
+
+    let Ok(output) = result else {
+        return HashSet::new();
+    };
+    if !output.status.success() {
+        return HashSet::new();
+    }
+
+    // Output is a header line ("Hardware acceleration methods:") followed by one
+    // method name per line.
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.contains(char::is_whitespace))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Probes `ffmpeg -hwaccels` once and caches the available decode methods.
+pub async fn init_hw_decoders() {
+    if HW_DECODERS_CACHE.get().is_some() {
+        return;
+    }
+    let available = probe_available_hwaccels().await;
+    let known: HashSet<String> = HW_DECODE_METHODS
+        .iter()
+        .filter(|m| available.contains(**m))
+        .map(|m| m.to_string())
+        .collect();
+    let _ = HW_DECODERS_CACHE.set(known);
+}
+
+/// Returns true when the given `-hwaccel` decode method is available.
+pub fn is_hw_decoder_available(method: &str) -> bool {
+    HW_DECODERS_CACHE.get().map(|set| set.contains(method)).unwrap_or(false)
+}
+
+/// Available hardware decode methods, sorted, after [`init_hw_decoders`].
+pub fn hw_decoders_available() -> Vec<String> {
+    HW_DECODERS_CACHE
+        .get()
+        .map(|set| {
+            let mut v: Vec<_> = set.iter().cloned().collect();
+            v.sort();
+            v
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,7 +152,7 @@ mod tests {
 
     #[test]
     fn test_hw_encoder_search_has_expected_count() {
-        assert_eq!(HW_ENCODERS_SEARCH.len(), 10);
+        assert_eq!(HW_ENCODERS_SEARCH.len(), 14);
     }
 
     #[test]

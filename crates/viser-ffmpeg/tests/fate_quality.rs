@@ -17,6 +17,7 @@ async fn encode_at_crf(input: &str, output_dir: &std::path::Path, crf: i32) -> s
         max_bitrate: 0.0,
         bufsize: 0.0,
         preset: "ultrafast".into(),
+        hwaccel: None,
         extra_args: vec![],
     };
     encode(job, None).await.unwrap();

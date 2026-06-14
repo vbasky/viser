@@ -218,6 +218,11 @@ detected dynamic range and color metadata to make that decision explicit.
 | H.265/HEVC | `libx265` | ~30-40% better compression than H.264 |
 | AV1 | `libsvtav1` | ~50% better compression, royalty-free, SVT-AV1 4.0 |
 
+Hardware encoders are auto-detected at startup and selectable by name or alias —
+NVENC, QuickSync, VideoToolbox, VAAPI, and AMF for H.264/H.265, plus AV1 on
+NVENC/QSV/VAAPI/AMF (e.g. `--codec av1_vaapi`). Hardware-accelerated decode is
+available via `encode --hwaccel <vaapi|cuda|qsv|videotoolbox>`.
+
 ## Design
 
 | Principle | Description |
@@ -318,12 +323,12 @@ viser is designed for content-adaptive VOD encoding and explicitly does not addr
 
 ## Status
 
-`0.6.x` — hardware encoder support (NVENC, QuickSync, VideoToolbox, VAAPI, AMF
-for H.264/H.265) plus battle-tested algorithms ported from a production Go
-implementation. Per-title analysis, per-shot Trellis optimization, and quality
-measurement are covered by integration tests. The API may evolve before `1.0`.
-See the [status & roadmap](STATUS.md) for what's covered today and what's
-planned.
+`0.6.x` — hardware encode/decode matrix (NVENC, QuickSync, VideoToolbox, VAAPI,
+AMF across H.264/H.265/AV1, plus `-hwaccel` decode) and battle-tested algorithms
+ported from a production Go implementation. Per-title analysis, per-shot Trellis
+optimization, and quality measurement are covered by integration tests. The API
+may evolve before `1.0`. See the [status & roadmap](STATUS.md) for what's covered
+today and what's planned.
 
 ## License
 

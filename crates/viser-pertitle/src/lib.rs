@@ -242,6 +242,7 @@ pub async fn analyze(
                 max_bitrate: 0.0,
                 bufsize: 0.0,
                 preset: preset_for_codec(t.codec, &cfg.encoding.preset),
+                hwaccel: None,
                 extra_args: vec![],
             };
 

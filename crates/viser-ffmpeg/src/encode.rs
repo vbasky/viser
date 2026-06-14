@@ -28,6 +28,10 @@ pub struct EncodeJob {
     pub bufsize: f64, // kbps, used for capped CRF mode
     /// Encoder speed preset (e.g. `"medium"`); empty leaves the encoder default.
     pub preset: String,
+    /// Optional hardware-accelerated decode method (e.g. `"vaapi"`, `"cuda"`,
+    /// `"qsv"`, `"videotoolbox"`). `None` (or empty) decodes in software.
+    /// Frames are downloaded to system memory for the filter/encode pipeline.
+    pub hwaccel: Option<String>,
     /// Extra raw FFmpeg arguments appended verbatim before the output path.
     pub extra_args: Vec<String>,
 }
@@ -224,7 +228,22 @@ enum EncodePass<'a> {
 }
 
 fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Vec<String>> {
-    let mut args = vec!["-y".into(), "-i".into(), job.input.clone(), "-an".into()];
+    let mut args = vec!["-y".into()];
+
+    // ── Input-level options (must precede -i) ──
+    // Hardware-accelerated decode. Without an explicit output format the decoded
+    // frames are downloaded back to system memory, so the rest of the software
+    // filter/encode pipeline keeps working unchanged.
+    if let Some(accel) = job.hwaccel.as_deref().filter(|a| !a.is_empty()) {
+        args.extend(["-hwaccel".into(), accel.into()]);
+    }
+    // VAAPI encoders require a render device initialised before the input so the
+    // `hwupload` filter has a target surface pool.
+    if job.codec.backend() == EncoderBackend::Vaapi {
+        args.extend(["-vaapi_device".into(), vaapi_device()]);
+    }
+
+    args.extend(["-i".into(), job.input.clone(), "-an".into()]);
 
     if !matches!(pass, EncodePass::First(_)) {
         args.extend(["-progress".into(), "pipe:1".into(), "-nostats".into()]);
@@ -246,11 +265,8 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
         }
     }
 
-    if let Some(ref res) = job.resolution
-        && res.width > 0
-        && res.height > 0
-    {
-        args.extend(["-vf".into(), format!("scale={}:{}:flags=lanczos", res.width, res.height)]);
+    if let Some(vf) = build_filter_chain(job) {
+        args.extend(["-vf".into(), vf]);
     }
 
     args.extend(job.extra_args.iter().cloned());
@@ -264,6 +280,36 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
     }
 
     Ok(args)
+}
+
+/// VAAPI render node to initialise. Overridable via `VISER_VAAPI_DEVICE` for
+/// hosts where the primary render node is not `renderD128`.
+fn vaapi_device() -> String {
+    std::env::var("VISER_VAAPI_DEVICE").unwrap_or_else(|_| "/dev/dri/renderD128".to_string())
+}
+
+/// Builds the `-vf` filter-chain value, or `None` when no filtering is needed.
+///
+/// Software encoders only scale (lanczos) when a target resolution is set.
+/// VAAPI encoders additionally need the frames converted and uploaded to GPU
+/// surfaces (`format=nv12,hwupload`), since the encoder consumes VAAPI surfaces
+/// — without this the encode fails with a format-conversion error.
+fn build_filter_chain(job: &EncodeJob) -> Option<String> {
+    let scale = job
+        .resolution
+        .filter(|res| res.width > 0 && res.height > 0)
+        .map(|res| format!("scale={}:{}:flags=lanczos", res.width, res.height));
+
+    if job.codec.backend() == EncoderBackend::Vaapi {
+        // Software-scale (if requested) in system memory, then upload to a VAAPI
+        // surface for the encoder.
+        Some(match scale {
+            Some(s) => format!("{s},format=nv12,hwupload"),
+            None => "format=nv12,hwupload".to_string(),
+        })
+    } else {
+        scale
+    }
 }
 
 fn build_sw_args(
@@ -560,6 +606,7 @@ mod tests {
             max_bitrate: 3000.0,
             bufsize: 6000.0,
             preset: "medium".into(),
+            hwaccel: None,
             extra_args: vec![],
         }
     }
@@ -1174,6 +1221,103 @@ mod tests {
         assert!(has_pair(&args, "-quality", "speed"));
     }
 
+    // ── AV1 hardware encoders ──
+    #[test]
+    fn test_av1_hw_codecs_have_correct_codec_string() {
+        for codec in &[Codec::NvencAv1, Codec::QsvAv1, Codec::VaapiAv1, Codec::AmfAv1] {
+            let job = EncodeJob {
+                codec: *codec,
+                preset: String::new(),
+                resolution: None,
+                extra_args: vec![],
+                ..sample_job(RateControlMode::Crf)
+            };
+            let args = build_encode_args(&job, EncodePass::Single).unwrap();
+            assert!(has_pair(&args, "-c:v", codec.as_str()), "expected -c:v {}", codec.as_str());
+        }
+    }
+
+    #[test]
+    fn test_av1_nvenc_crf_uses_constqp() {
+        let args = build_encode_args(&hw_crf(Codec::NvencAv1), EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-rc", "constqp"));
+        assert!(has_arg(&args, "-cq"));
+    }
+
+    #[test]
+    fn test_av1_vaapi_crf_uses_global_quality() {
+        let args = build_encode_args(&hw_crf(Codec::VaapiAv1), EncodePass::Single).unwrap();
+        assert!(has_arg(&args, "-global_quality"));
+    }
+
+    // ── VAAPI device init + hwupload filter chain ──
+    #[test]
+    fn test_vaapi_sets_device_before_input() {
+        let args = build_encode_args(&hw_crf(Codec::VaapiH264), EncodePass::Single).unwrap();
+        let dev_idx =
+            args.iter().position(|a| a == "-vaapi_device").expect("missing -vaapi_device");
+        let i_idx = args.iter().position(|a| a == "-i").expect("missing -i");
+        assert!(dev_idx < i_idx, "-vaapi_device must precede -i: {args:?}");
+    }
+
+    #[test]
+    fn test_vaapi_filter_chain_has_hwupload() {
+        // With a target resolution: scale then format+upload, in one -vf chain.
+        let job = EncodeJob { codec: Codec::VaapiH264, ..sample_job(RateControlMode::Crf) };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("missing -vf");
+        let vf = &args[vf_idx + 1];
+        assert!(vf.contains("scale=1280:720:flags=lanczos"), "missing scale: {vf}");
+        assert!(vf.contains("format=nv12,hwupload"), "missing hwupload: {vf}");
+        assert_eq!(args.iter().filter(|a| *a == "-vf").count(), 1, "exactly one -vf: {args:?}");
+    }
+
+    #[test]
+    fn test_vaapi_hwupload_present_without_resolution() {
+        let job = EncodeJob {
+            codec: Codec::VaapiH264,
+            resolution: None,
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("missing -vf");
+        assert_eq!(args[vf_idx + 1], "format=nv12,hwupload");
+    }
+
+    #[test]
+    fn test_non_vaapi_has_no_hwupload_or_device() {
+        let job = EncodeJob { codec: Codec::NvencH264, ..sample_job(RateControlMode::Crf) };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(!has_arg(&args, "-vaapi_device"));
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("missing -vf");
+        assert_eq!(args[vf_idx + 1], "scale=1280:720:flags=lanczos");
+    }
+
+    // ── Hardware decode (hwaccel) ──
+    #[test]
+    fn test_hwaccel_injected_before_input() {
+        let job = EncodeJob {
+            codec: Codec::X264,
+            hwaccel: Some("cuda".into()),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        let acc_idx = args.iter().position(|a| a == "-hwaccel").expect("missing -hwaccel");
+        let i_idx = args.iter().position(|a| a == "-i").expect("missing -i");
+        assert_eq!(args[acc_idx + 1], "cuda");
+        assert!(acc_idx < i_idx, "-hwaccel must precede -i: {args:?}");
+    }
+
+    #[test]
+    fn test_no_hwaccel_when_unset_or_empty() {
+        for hw in [None, Some(String::new())] {
+            let job =
+                EncodeJob { codec: Codec::X264, hwaccel: hw, ..sample_job(RateControlMode::Crf) };
+            let args = build_encode_args(&job, EncodePass::Single).unwrap();
+            assert!(!has_arg(&args, "-hwaccel"), "unexpected -hwaccel: {args:?}");
+        }
+    }
+
     #[test]
     fn test_amf_preset_balanced() {
         let job = EncodeJob {
@@ -1373,6 +1517,10 @@ mod tests {
                 Just(Codec::VaapiH265),
                 Just(Codec::AmfH264),
                 Just(Codec::AmfH265),
+                Just(Codec::NvencAv1),
+                Just(Codec::QsvAv1),
+                Just(Codec::VaapiAv1),
+                Just(Codec::AmfAv1),
             ]
         }
 
@@ -1407,20 +1555,23 @@ mod tests {
                         max_bitrate: max_br.abs().min(100000.0),
                         bufsize: bufsize.abs().min(200000.0),
                         preset,
+                        hwaccel: None,
                         extra_args: vec![],
                     }
                 })
         }
 
         proptest! {
-            /// Invariant: every arg list starts with -y -i <input>
+            /// Invariant: every arg list starts with -y, and the input file is
+            /// named immediately after a `-i` flag. (Input-level options such as
+            /// `-hwaccel` or `-vaapi_device` may sit between `-y` and `-i`.)
             #[test]
             fn args_start_with_overwrite_and_input(job in arb_encode_job()) {
                 if let Ok(args) = build_encode_args(&job, EncodePass::Single) {
                     assert!(args.len() >= 3, "too few args: {args:?}");
                     assert_eq!(args[0], "-y", "first arg must be -y");
-                    assert_eq!(args[1], "-i", "second arg must be -i");
-                    assert_eq!(args[2], "input.mp4", "third arg must be input path");
+                    let i_idx = args.iter().position(|a| a == "-i").expect("must contain -i");
+                    assert_eq!(args[i_idx + 1], "input.mp4", "input path must follow -i");
                 }
             }
 
