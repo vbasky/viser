@@ -47,9 +47,11 @@ impl Checkpoint {
 
         if let Ok(data) = fs::read(&path)
             && let Ok(existing) = serde_json::from_slice::<State>(&data)
-                && existing.config_hash == config_hash && existing.source == source {
-                    state = existing;
-                }
+            && existing.config_hash == config_hash
+            && existing.source == source
+        {
+            state = existing;
+        }
 
         Ok(Self { mu: Mutex::new(CheckpointInner { path, state, dirty: false }) })
     }

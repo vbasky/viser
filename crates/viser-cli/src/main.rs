@@ -1327,17 +1327,20 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
         anyhow::bail!("--bufsize-factor must be greater than zero");
     }
     if let Some(chunk_seconds) = args.chunk_seconds
-        && chunk_seconds <= 0.0 {
-            anyhow::bail!("--chunk-seconds must be greater than zero");
-        }
+        && chunk_seconds <= 0.0
+    {
+        anyhow::bail!("--chunk-seconds must be greater than zero");
+    }
 
     if let Some(video) = result.source_info.video_stream()
-        && video.is_hdr() && !args.allow_hdr {
-            anyhow::bail!(
-                "HDR source detected ({}) in analysis/source. Delivery currently requires --allow-hdr for best-effort output.",
-                video.hdr_kind().unwrap_or("HDR")
-            );
-        }
+        && video.is_hdr()
+        && !args.allow_hdr
+    {
+        anyhow::bail!(
+            "HDR source detected ({}) in analysis/source. Delivery currently requires --allow-hdr for best-effort output.",
+            video.hdr_kind().unwrap_or("HDR")
+        );
+    }
 
     let preset = args.preset.unwrap_or_else(|| result.config.encoding.preset.clone());
     std::fs::create_dir_all(&args.output_dir)?;

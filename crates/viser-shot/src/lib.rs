@@ -84,10 +84,11 @@ fn parse_scdet_output(output: &str) -> Vec<SceneChange> {
     for line in output.lines() {
         if line.starts_with("frame:") {
             if let Some(pts_time) = extract_field(line, "pts_time:")
-                && let Ok(seconds) = pts_time.parse::<f64>() {
-                    current_pts = Duration::from_secs_f64(seconds);
-                    has_pts = true;
-                }
+                && let Ok(seconds) = pts_time.parse::<f64>()
+            {
+                current_pts = Duration::from_secs_f64(seconds);
+                has_pts = true;
+            }
             current_score = 0.0;
             continue;
         }

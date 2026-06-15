@@ -138,9 +138,10 @@ async fn run_ffmpeg(
             let mut p = Progress::default();
             while let Ok(Some(line)) = lines.next_line().await {
                 if parse_progress_line(&line, &mut p)
-                    && let Some(ref tx) = tx {
-                        let _ = tx.try_send(p.clone());
-                    }
+                    && let Some(ref tx) = tx
+                {
+                    let _ = tx.try_send(p.clone());
+                }
             }
         });
     }
@@ -292,12 +293,11 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
     }
 
     if let Some(ref res) = job.resolution
-        && res.width > 0 && res.height > 0 {
-            args.extend([
-                "-vf".into(),
-                format!("scale={}:{}:flags=lanczos", res.width, res.height),
-            ]);
-        }
+        && res.width > 0
+        && res.height > 0
+    {
+        args.extend(["-vf".into(), format!("scale={}:{}:flags=lanczos", res.width, res.height)]);
+    }
 
     args.extend(job.extra_args.iter().cloned());
 

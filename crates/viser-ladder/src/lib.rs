@@ -81,9 +81,10 @@ pub fn select(h: &Hull, opts: &Opts) -> Ladder {
             continue;
         }
         if let Some(&min_br) = crossover_min.get(&p.resolution)
-            && p.bitrate < min_br {
-                continue;
-            }
+            && p.bitrate < min_br
+        {
+            continue;
+        }
         candidates.push(p.clone());
     }
 

@@ -172,10 +172,11 @@ fn parse_complexity_output(output: &str) -> Vec<FrameComplexity> {
             has_pts = false;
 
             if let Some(pts_time) = extract_field(line, "pts_time:")
-                && let Ok(seconds) = pts_time.parse::<f64>() {
-                    current.pts = Duration::from_secs_f64(seconds);
-                    has_pts = true;
-                }
+                && let Ok(seconds) = pts_time.parse::<f64>()
+            {
+                current.pts = Duration::from_secs_f64(seconds);
+                has_pts = true;
+            }
             continue;
         }
 
