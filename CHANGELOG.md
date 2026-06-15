@@ -1,4 +1,43 @@
 # Changelog
+## [0.7.1] - 2026-06-16
+
+Correctness fixes across shot detection, hardware encoding, probing, quality
+measurement, and the comparison player.
+
+### Fixed
+
+- **Shot detection** — `scdet` parsing now keys off the `lavfi.scd.time` cut flag
+  instead of treating every per-frame score as a boundary. Previously every frame
+  was marked a boundary and the minimum-duration merge collapsed them back into a
+  single shot, so a 60s clip with 10 cuts reported just 1. `detect()` now also fails
+  loudly on ffmpeg errors and skips boundaries at/after the total duration.
+- **NVENC capped CRF** — uses `-rc vbr` instead of `constqp`, which silently ignored
+  `-maxrate`/`-bufsize` and dropped the requested bitrate cap.
+- **Convex hull** — non-finite (NaN/inf) bitrate/VMAF points are filtered before hull
+  construction, avoiding a panic.
+- **`extract()`** — validates that start is non-negative and duration is positive and
+  finite; concat list paths now escape backslashes as well as single quotes.
+- **Probe (MediaInfo path)** — the 8-bit chroma fallback emits a valid `yuv420p`
+  pixel format instead of the invalid `yuv420p8le`.
+- **Quality measurement** — frame-extraction and XPSNR failures include ffmpeg stderr,
+  and a frame-count mismatch is warned. Weighted PSNR `(6·Y + U + V) / 8` is only used
+  when both chroma planes are present, otherwise it falls back to luma.
+- **Per-segment** — guards against zero total duration so average bitrate/VMAF are
+  `0.0` rather than `NaN`.
+- **CLI loudness report** — includes true-peak (`Peak:`) and gating threshold lines;
+  the over-broad `starts_with("L")` filter that dropped them while printing header
+  noise is fixed.
+- **Comparison player** — frame timestamps derive from the source's real frame rate
+  (probed) instead of a hardcoded 24 fps, fixing dip seek positions on 25/30/50/60 fps
+  content.
+
+### Added
+
+- **Per-shot analysis** — `vmaf_model` and `allow_hdr` are now configurable, with
+  matching `per-shot analyze` CLI flags.
+- **`per-segment analyze --segment-duration`** — segment length is configurable
+  (default 1s) instead of hardcoded.
+
 ## [0.7.0] - 2026-06-15
 
 Completes the hardware encode/decode matrix.
