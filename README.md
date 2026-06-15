@@ -218,10 +218,57 @@ detected dynamic range and color metadata to make that decision explicit.
 | H.265/HEVC | `libx265` | ~30-40% better compression than H.264 |
 | AV1 | `libsvtav1` | ~50% better compression, royalty-free, SVT-AV1 4.0 |
 
-Hardware encoders are auto-detected at startup and selectable by name or alias —
-NVENC, QuickSync, VideoToolbox, VAAPI, and AMF for H.264/H.265, plus AV1 on
-NVENC/QSV/VAAPI/AMF (e.g. `--codec av1_vaapi`). Hardware-accelerated decode is
-available via `encode --hwaccel <vaapi|cuda|qsv|videotoolbox>`.
+### Hardware encode matrix
+
+Hardware encoders are auto-detected at startup (via `ffmpeg -encoders`) and
+selectable by name or alias, e.g. `--codec av1_vaapi`. Each cell is the FFmpeg
+encoder viser dispatches to; availability requires FFmpeg built with the backend
+**and** matching silicon present at runtime.
+
+| Backend (API) | Vendor / OS | H.264 | H.265/HEVC | AV1 |
+| --- | --- | --- | --- | --- |
+| Software | any CPU | `libx264` | `libx265` | `libsvtav1` |
+| NVENC | NVIDIA · Win/Linux | `h264_nvenc` | `hevc_nvenc` | `av1_nvenc` |
+| QuickSync (QSV) | Intel · Win/Linux | `h264_qsv` | `hevc_qsv` | `av1_qsv` |
+| VAAPI | Intel/AMD · Linux | `h264_vaapi` | `hevc_vaapi` | `av1_vaapi` |
+| AMF | AMD · Win/Linux | `h264_amf` | `hevc_amf` | `av1_amf` |
+| VideoToolbox | Apple · macOS | `h264_videotoolbox` | `hevc_videotoolbox` | — ¹ |
+
+17 encoders total: 3 software + 14 hardware. ¹ Apple ships no AV1 *encoder*, so
+there is no `av1_videotoolbox` (Apple Silicon M3+ can still *decode* AV1).
+
+AV1 hardware encode requires recent silicon: NVENC AV1 → NVIDIA Ada/Blackwell;
+QSV AV1 → Intel Arc/Battlemage; VAAPI AV1 → Arc/Battlemage or AMD RDNA3+;
+AMF AV1 → AMD RDNA3+.
+
+### Hardware decode matrix
+
+Detected via `ffmpeg -hwaccels` and selectable with `encode --hwaccel <method>`.
+Decoded frames are downloaded to system memory, so any decode method composes
+with any encoder.
+
+| `--hwaccel` | Vendor / OS |
+| --- | --- |
+| `cuda` | NVIDIA · Win/Linux |
+| `qsv` | Intel · Win/Linux |
+| `vaapi` | Intel/AMD · Linux |
+| `videotoolbox` | Apple · macOS (incl. AV1 decode on M3+) |
+| `d3d11va` | any GPU · Windows |
+| `dxva2` | any GPU · Windows |
+| `vdpau` | NVIDIA (legacy) · Linux |
+
+### Prebuilt binary targets
+
+Each release ships binaries for the targets below. Other targets (e.g. ARM64
+Linux, Windows ARM64) build from source — `cargo install` works on any
+Rust-supported platform; only the prebuilt binaries are limited to these four.
+
+| Target triple | OS | CPU arch |
+| --- | --- | --- |
+| `aarch64-apple-darwin` | macOS | Apple Silicon (ARM64) |
+| `x86_64-apple-darwin` | macOS | Intel (x86-64) |
+| `x86_64-unknown-linux-gnu` | Linux | x86-64 |
+| `x86_64-pc-windows-msvc` | Windows | x86-64 |
 
 ## Design
 
