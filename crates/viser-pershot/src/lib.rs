@@ -28,13 +28,23 @@ pub struct Config {
     pub shot_opts: DetectOpts,
     /// Ladder selection options forwarded to the per-shot analysis.
     pub ladder_opts: LadderOpts,
+    /// VMAF model name passed to the quality measurement; empty uses the default model.
+    pub vmaf_model: String,
+    /// Allow best-effort analysis of HDR sources instead of bailing out.
+    pub allow_hdr: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         let mut enc = viser_encoding::Config::default();
         enc.crf_values = vec![22, 26, 30, 34, 38];
-        Self { encoding: enc, shot_opts: DetectOpts::default(), ladder_opts: LadderOpts::default() }
+        Self {
+            encoding: enc,
+            shot_opts: DetectOpts::default(),
+            ladder_opts: LadderOpts::default(),
+            vmaf_model: String::new(),
+            allow_hdr: false,
+        }
     }
 }
 
@@ -131,8 +141,8 @@ pub async fn analyze(
             encoding: cfg.encoding.clone(),
             ladder_opts: cfg.ladder_opts.clone(),
             checkpoint_path: String::new(),
-            vmaf_model: String::new(),
-            allow_hdr: false,
+            vmaf_model: cfg.vmaf_model.clone(),
+            allow_hdr: cfg.allow_hdr,
         };
         let sender = sender.clone();
         let shots_len = shots.len();
@@ -167,4 +177,24 @@ pub async fn analyze(
         trial_count: total_trials,
         assignments: vec![],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_default() {
+        let cfg = Config::default();
+        assert!(!cfg.allow_hdr);
+        assert!(cfg.vmaf_model.is_empty());
+        assert_eq!(cfg.encoding.crf_values, vec![22, 26, 30, 34, 38]);
+    }
+
+    #[test]
+    fn test_config_can_set_hdr_and_vmaf_model() {
+        let cfg = Config { vmaf_model: "vmaf_v0.6.1".into(), allow_hdr: true, ..Config::default() };
+        assert!(cfg.allow_hdr);
+        assert_eq!(cfg.vmaf_model, "vmaf_v0.6.1");
+    }
 }

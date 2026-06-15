@@ -317,8 +317,10 @@ fn parse_vmaf_log(data: &[u8], per_frame: bool) -> anyhow::Result<Result> {
     result.psnr = pooled_mean(&log, &["psnr_y", "psnr"]);
     result.psnr_u = pooled_mean(&log, &["psnr_cb", "psnr_u"]);
     result.psnr_v = pooled_mean(&log, &["psnr_cr", "psnr_v"]);
-    result.psnr_avg = if result.psnr_u > 0.0 || result.psnr_v > 0.0 {
-        // Standard 4:2:0 luma-weighted PSNR.
+    result.psnr_avg = if result.psnr_u > 0.0 && result.psnr_v > 0.0 {
+        // Standard 4:2:0 luma-weighted PSNR. Requires both chroma planes;
+        // with only one present the (6Y+U+V)/8 weighting would divide by a
+        // spurious zero term and under-report, so fall back to luma.
         (6.0 * result.psnr + result.psnr_u + result.psnr_v) / 8.0
     } else {
         result.psnr
@@ -493,12 +495,13 @@ async fn extract_frames_png(
     let output = Command::new(ffmpeg_path())
         .args(["-i", input, "-vf", &vf, "-fps_mode", "passthrough", "-c:v", "png"])
         .arg(&pattern)
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .output()
         .await?;
 
     if !output.status.success() {
-        anyhow::bail!("failed to extract frames from {input}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("failed to extract frames from {input}: {stderr}");
     }
 
     let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)?
@@ -524,6 +527,15 @@ async fn extract_frame_pairs(
     opts: &MeasureOpts,
 ) -> anyhow::Result<FramePairs> {
     let (width, height, nb_frames) = reference_dims(reference, opts).await?;
+    let (_, _, dist_nb_frames) = reference_dims(distorted, opts).await?;
+    if dist_nb_frames != nb_frames {
+        warn!(
+            reference_frames = nb_frames,
+            distorted_frames = dist_nb_frames,
+            "reference and distorted frame counts differ; sampled perceptual metrics may be misaligned"
+        );
+    }
+
     let selection: Option<Vec<i32>> = if opts.frame_samples == 0 {
         None
     } else {
@@ -648,12 +660,13 @@ async fn measure_xpsnr(
     );
     let output = Command::new(ffmpeg_path())
         .args(["-i", distorted, "-i", reference, "-lavfi", &filtergraph, "-f", "null", "-"])
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .output()
         .await?;
 
     if !output.status.success() {
-        anyhow::bail!("xpsnr measurement failed");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("xpsnr measurement failed: {stderr}");
     }
 
     let log = std::fs::read_to_string(stats.path())?;
