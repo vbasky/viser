@@ -99,6 +99,14 @@ jobs:
              found { print }' \
             CHANGELOG.md > /tmp/release-notes.md
 
+          # Guard: a tag must have a matching CHANGELOG.md section, otherwise the
+          # release would publish with an empty body. Fail loudly instead.
+          if ! grep -q '[^[:space:]]' /tmp/release-notes.md; then
+            echo "::error::No '## [${VERSION#v}] - ...' section found in CHANGELOG.md." \
+                 "Add release notes for ${VERSION#v} before tagging." >&2
+            exit 1
+          fi
+
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:

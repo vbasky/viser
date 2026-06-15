@@ -47,6 +47,16 @@ if git rev-parse "v$VERSION" >/dev/null 2>&1; then
     exit 1
 fi
 
+# Pre-tag check: CHANGELOG.md must have a section for this version, otherwise the
+# CI release workflow would publish a GitHub Release with an empty body.
+if ! awk -v ver="$VERSION" \
+        '$0 ~ "^## \\[" ver "\\] - " { found=1 } found && /[^[:space:]]/ && !/^## / { ok=1 }
+         END { exit !ok }' CHANGELOG.md; then
+    echo "ERROR: No '## [$VERSION] - ...' section with content found in CHANGELOG.md"
+    echo "       Add release notes for $VERSION before releasing."
+    exit 1
+fi
+
 # Bump version in all crate Cargo.tomls
 for crate in "${CRATES[@]}"; do
     perl -i -pe "s/^version = \"[^\"]+\"/version = \"$VERSION\"/" "crates/$crate/Cargo.toml"
