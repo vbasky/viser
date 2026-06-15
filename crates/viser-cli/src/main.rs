@@ -467,6 +467,9 @@ struct PerSegmentAnalyzeArgs {
     /// Max iterations per segment
     #[arg(long, default_value_t = 3)]
     max_iter: i32,
+    /// Segment duration in seconds
+    #[arg(long, default_value_t = 1.0)]
+    segment_duration: f64,
 }
 
 // ── Context-Aware ──
@@ -1538,6 +1541,8 @@ async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs) -> anyhow::Result<()> {
             min_duration: Duration::from_secs_f64(args.min_duration),
         },
         ladder_opts: viser_ladder::Opts::default(),
+        vmaf_model: args.vmaf_model,
+        allow_hdr: args.allow_hdr,
     };
 
     println!("Viser Per-Shot Analysis\n  Source: {}", args.input);
@@ -1962,7 +1967,15 @@ async fn cmd_inspect_loudness(file: &str) -> anyhow::Result<()> {
     println!("{}", "-".repeat(30));
     for line in stderr.lines() {
         let line = line.trim();
-        if line.starts_with("I:") || line.starts_with("LRA:") || line.starts_with("L") {
+        // ebur128 summary labels: integrated (I:), loudness range (LRA:, LRA low:,
+        // LRA high:), gating thresholds (Threshold:), and true peak (Peak:). The
+        // old `starts_with("L")` caught the "Loudness range:" header noise while
+        // missing the true-peak and threshold lines (they start with P/T).
+        if line.starts_with("I:")
+            || line.starts_with("LRA")
+            || line.starts_with("Threshold:")
+            || line.starts_with("Peak:")
+        {
             println!("  {line}");
         }
     }

@@ -338,7 +338,14 @@ fn build_hw_args(
                 EncoderBackend::Nvenc => {
                     let cq = crf_to_nvenc_cq(job.crf);
                     args.extend(["-cq".into(), cq.to_string()]);
-                    args.extend(["-rc".into(), "constqp".into()]);
+                    // `constqp` is constant-QP and ignores -maxrate/-bufsize, so a
+                    // capped-CRF encode must use VBR for the bitrate cap to take effect.
+                    let rc = if matches!(job.rate_control, RateControlMode::CappedCrf) {
+                        "vbr"
+                    } else {
+                        "constqp"
+                    };
+                    args.extend(["-rc".into(), rc.into()]);
                 }
                 EncoderBackend::Qsv => {
                     let gq = crf_to_qsv_quality(job.crf);
@@ -1129,7 +1136,8 @@ mod tests {
             ..sample_job(RateControlMode::Crf)
         };
         let args = build_encode_args(&job, EncodePass::Single).unwrap();
-        assert!(has_pair(&args, "-rc", "constqp"));
+        // Capped CRF must use VBR (not constqp) so the bitrate cap is honored.
+        assert!(has_pair(&args, "-rc", "vbr"));
         assert!(has_pair(&args, "-maxrate", "5000k"));
         assert!(has_pair(&args, "-bufsize", "10000k"));
     }

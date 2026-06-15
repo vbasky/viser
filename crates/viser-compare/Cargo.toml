@@ -21,3 +21,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["rt", "net", "io-util"] }
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.7.0" }

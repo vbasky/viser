@@ -229,11 +229,19 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
         total_dur += dur;
     }
 
+    // Guard against zero total duration (no segments, or all zero-length) so
+    // averages are 0.0 rather than NaN.
+    let (avg_bitrate, avg_vmaf) = if total_dur > 0.0 {
+        (total_bitrate / total_dur, total_vmaf / total_dur)
+    } else {
+        (0.0, 0.0)
+    };
+
     Ok(Result {
         source: source.to_string(),
         segments,
-        avg_bitrate: total_bitrate / total_dur,
-        avg_vmaf: total_vmaf / total_dur,
+        avg_bitrate,
+        avg_vmaf,
         target_vmaf: cfg.target_vmaf,
         duration: start.elapsed(),
         complexity_profile: profile,
