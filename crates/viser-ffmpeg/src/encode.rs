@@ -161,6 +161,13 @@ async fn run_ffmpeg(
 
 /// Copies a segment of a video file without re-encoding.
 pub async fn extract(input: &str, output: &str, start: f64, duration: f64) -> anyhow::Result<()> {
+    if start.is_finite() && start < 0.0 {
+        anyhow::bail!("extract start must be non-negative, got {start}");
+    }
+    if !duration.is_finite() || duration <= 0.0 {
+        anyhow::bail!("extract duration must be positive, got {duration}");
+    }
+
     let args = vec![
         "-y".to_string(),
         "-ss".into(),
@@ -198,7 +205,7 @@ pub async fn concat(inputs: &[String], output: &str) -> anyhow::Result<()> {
     let list_path = make_concat_list_path(output);
     let list_body = inputs
         .iter()
-        .map(|path| format!("file '{}'", path.replace('\'', "'\\''")))
+        .map(|path| format!("file '{}'", escape_concat_path(path)))
         .collect::<Vec<_>>()
         .join("\n");
     std::fs::write(&list_path, format!("{list_body}\n"))?;
@@ -502,6 +509,13 @@ fn map_amf_quality(preset: &str) -> &str {
         "medium" | "slow" | "slower" | "veryslow" => "quality",
         other => other,
     }
+}
+
+/// Escape a path for use inside single quotes in an FFmpeg concat list file.
+/// The concat demuxer treats backslash as an escape character, so both
+/// backslashes and single quotes must be escaped.
+fn escape_concat_path(path: &str) -> String {
+    path.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
 fn make_passlog_prefix(output: &str) -> PathBuf {
@@ -983,6 +997,47 @@ mod tests {
     fn test_make_concat_list_path_is_txt() {
         let path = make_concat_list_path("output.mp4");
         assert!(path.to_string_lossy().ends_with(".txt"));
+    }
+
+    // ── Concat path escaping ──
+    #[test]
+    fn test_escape_concat_path_escapes_single_quotes() {
+        assert_eq!(escape_concat_path("video's.mp4"), "video\\'s.mp4");
+    }
+
+    #[test]
+    fn test_escape_concat_path_escapes_backslashes() {
+        assert_eq!(escape_concat_path("dir\\video.mp4"), "dir\\\\video.mp4");
+    }
+
+    #[test]
+    fn test_escape_concat_path_no_change_for_simple_paths() {
+        assert_eq!(escape_concat_path("/tmp/video.mp4"), "/tmp/video.mp4");
+    }
+
+    // ── Extract input validation ──
+    #[tokio::test]
+    async fn test_extract_rejects_negative_start() {
+        let err = extract("in.mp4", "out.mp4", -1.0, 5.0).await.unwrap_err();
+        assert!(err.to_string().contains("start must be non-negative"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_rejects_zero_duration() {
+        let err = extract("in.mp4", "out.mp4", 0.0, 0.0).await.unwrap_err();
+        assert!(err.to_string().contains("duration must be positive"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_rejects_negative_duration() {
+        let err = extract("in.mp4", "out.mp4", 0.0, -5.0).await.unwrap_err();
+        assert!(err.to_string().contains("duration must be positive"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_rejects_nan_duration() {
+        let err = extract("in.mp4", "out.mp4", 0.0, f64::NAN).await.unwrap_err();
+        assert!(err.to_string().contains("duration must be positive"));
     }
 
     // ── Helper: hardware-specific job builders ──

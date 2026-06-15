@@ -57,11 +57,12 @@ pub struct Crossover {
 /// Uses Andrew's monotone chain algorithm adapted for R-D optimization.
 /// Time complexity: O(n log n).
 pub fn compute_upper(points: &[Point]) -> Hull {
-    if points.is_empty() {
+    let mut sorted: Vec<Point> =
+        points.iter().filter(|p| p.bitrate.is_finite() && p.vmaf.is_finite()).cloned().collect();
+    if sorted.is_empty() {
         return Hull { points: vec![] };
     }
 
-    let mut sorted: Vec<Point> = points.to_vec();
     sorted.sort_by(|a, b| {
         a.bitrate.partial_cmp(&b.bitrate).unwrap().then(b.vmaf.partial_cmp(&a.vmaf).unwrap())
     });
@@ -205,6 +206,29 @@ mod tests {
             vec![point(5000.0, 98.0), point(100.0, 50.0), point(1500.0, 90.0), point(500.0, 70.0)];
         let hull = compute_upper(&points);
         assert!(hull.points.windows(2).all(|w| w[0].bitrate <= w[1].bitrate));
+    }
+
+    #[test]
+    fn test_compute_upper_filters_non_finite() {
+        let points = vec![
+            point(100.0, 50.0),
+            point(500.0, f64::NAN),
+            point(f64::INFINITY, 90.0),
+            point(1000.0, 95.0),
+            point(2000.0, f64::NEG_INFINITY),
+        ];
+        let hull = compute_upper(&points);
+        // NaN/Inf points are dropped; valid points form the hull.
+        assert_eq!(hull.points.len(), 2);
+        assert_eq!(hull.points[0].bitrate, 100.0);
+        assert_eq!(hull.points[1].bitrate, 1000.0);
+    }
+
+    #[test]
+    fn test_compute_upper_all_non_finite_returns_empty() {
+        let points = vec![point(f64::NAN, 50.0), point(100.0, f64::NAN)];
+        let hull = compute_upper(&points);
+        assert!(hull.points.is_empty());
     }
 
     #[test]
