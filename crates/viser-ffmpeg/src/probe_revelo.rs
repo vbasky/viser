@@ -293,6 +293,9 @@ fn pix_fmt_from_fields(fields: &[(String, String)]) -> String {
         ("4:4:4", 10, false) => "yuv444p10le".into(),
         ("4:4:4", 12, false) => "yuv444p12le".into(),
         ("4:4:4", 10, true) => "yuva444p10le".into(),
+        // 8-bit formats carry no bit-depth suffix or endianness (e.g. `yuv420p`,
+        // not `yuv420p8le`, which is not a valid FFmpeg pixel format).
+        (_, d, _) if d <= 8 => "yuv420p".into(),
         _ => format!("yuv420p{depth}le"),
     }
 }
@@ -369,7 +372,9 @@ mod tests {
             vec![("ChromaSubsampling".into(), "4:2:2".into()), ("BitDepth".into(), "10".into())];
         assert_eq!(pix_fmt_from_fields(&fields422), "yuv422p10le");
 
+        // Unknown chroma at 8-bit falls back to plain `yuv420p`, not the
+        // invalid `yuv420p8le`.
         let fields_no_chroma: Vec<(String, String)> = vec![("BitDepth".into(), "8".into())];
-        assert_eq!(pix_fmt_from_fields(&fields_no_chroma), "yuv420p8le");
+        assert_eq!(pix_fmt_from_fields(&fields_no_chroma), "yuv420p");
     }
 }

@@ -58,6 +58,11 @@ pub async fn detect(path: &str, opts: DetectOpts) -> anyhow::Result<Vec<Shot>> {
         .output()
         .await?;
 
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("ffmpeg scdet failed: {stderr}");
+    }
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let boundaries = parse_scdet_output(&stdout);
     let shots = build_shots(&boundaries, total_duration, min_duration);
@@ -73,29 +78,37 @@ struct SceneChange {
 fn parse_scdet_output(output: &str) -> Vec<SceneChange> {
     let mut changes = Vec::new();
     let mut current_pts = Duration::ZERO;
+    let mut current_score = 0.0;
     let mut has_pts = false;
 
     for line in output.lines() {
         if line.starts_with("frame:") {
-            if let Some(pts_time) = extract_field(line, "pts_time:") {
-                if let Ok(seconds) = pts_time.parse::<f64>() {
+            if let Some(pts_time) = extract_field(line, "pts_time:")
+                && let Ok(seconds) = pts_time.parse::<f64>() {
                     current_pts = Duration::from_secs_f64(seconds);
                     has_pts = true;
                 }
+            current_score = 0.0;
+            continue;
+        }
+
+        // scdet prints `lavfi.scd.score` for *every* frame; the threshold only
+        // governs whether scdet flags an actual cut, which it signals by also
+        // emitting `lavfi.scd.time`. Key off that line so we mark a boundary
+        // only where scdet itself detected a scene change.
+        if let Some(score_str) = line.strip_prefix("lavfi.scd.score=") {
+            if let Ok(score) = score_str.parse::<f64>() {
+                current_score = score;
             }
             continue;
         }
 
-        if let Some(score_str) = line.strip_prefix("lavfi.scd.score=") {
-            if let Ok(score) = score_str.parse::<f64>() {
-                if score > 0.0 && has_pts {
-                    changes.push(SceneChange { pts: current_pts, score });
-                }
-            }
+        if line.starts_with("lavfi.scd.time=") && has_pts {
+            changes.push(SceneChange { pts: current_pts, score: current_score });
         }
     }
 
-    changes.sort_by(|a, b| a.pts.cmp(&b.pts));
+    changes.sort_by_key(|a| a.pts);
     changes
 }
 
@@ -126,7 +139,7 @@ fn build_shots(
     let mut prev_end = Duration::ZERO;
 
     for sc in boundaries {
-        if sc.pts <= prev_end {
+        if sc.pts <= prev_end || sc.pts >= total_duration {
             continue;
         }
 
@@ -215,15 +228,19 @@ frame: 2 pts_time:2.000
 
     #[test]
     fn test_parse_scdet_output_with_score() {
+        // A score line alone is NOT a scene change; scdet emits `lavfi.scd.time`
+        // only on frames it actually flags as cuts.
         let output = "\
 frame: 1 pts_time:1.000
-frame: 2 pts_time:2.000
 lavfi.scd.score=15.5
-frame: 3 pts_time:3.000
+lavfi.scd.time=1.000
+frame: 2 pts_time:2.000
+lavfi.scd.score=3.0
 ";
         let result = parse_scdet_output(output);
         assert_eq!(result.len(), 1);
         assert!((result[0].score - 15.5).abs() < 1e-9);
+        assert_eq!(result[0].pts, Duration::from_secs(1));
     }
 
     #[test]
@@ -231,10 +248,14 @@ frame: 3 pts_time:3.000
         let output = "\
 frame: 1 pts_time:1.000
 lavfi.scd.score=12.0
+lavfi.scd.time=1.000
 frame: 2 pts_time:2.000
+lavfi.scd.score=2.0
 frame: 3 pts_time:3.000
 lavfi.scd.score=45.5
+lavfi.scd.time=3.000
 frame: 4 pts_time:4.000
+lavfi.scd.score=1.0
 ";
         let result = parse_scdet_output(output);
         assert_eq!(result.len(), 2);
@@ -243,16 +264,19 @@ frame: 4 pts_time:4.000
     }
 
     #[test]
-    fn test_parse_scdet_output_ignores_zero_score() {
+    fn test_parse_scdet_output_ignores_sub_threshold_frames() {
+        // Every frame has a score, but only the one with `lavfi.scd.time` counts.
         let output = "\
 frame: 1 pts_time:1.000
-lavfi.scd.score=0.0
+lavfi.scd.score=4.9
 frame: 2 pts_time:2.000
 lavfi.scd.score=25.0
+lavfi.scd.time=2.000
 ";
         let result = parse_scdet_output(output);
         assert_eq!(result.len(), 1);
         assert!((result[0].score - 25.0).abs() < 1e-9);
+        assert_eq!(result[0].pts, Duration::from_secs(2));
     }
 
     #[test]

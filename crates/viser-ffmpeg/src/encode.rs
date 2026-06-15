@@ -137,11 +137,10 @@ async fn run_ffmpeg(
             let mut lines = reader.lines();
             let mut p = Progress::default();
             while let Ok(Some(line)) = lines.next_line().await {
-                if parse_progress_line(&line, &mut p) {
-                    if let Some(ref tx) = tx {
+                if parse_progress_line(&line, &mut p)
+                    && let Some(ref tx) = tx {
                         let _ = tx.try_send(p.clone());
                     }
-                }
             }
         });
     }
@@ -157,6 +156,13 @@ async fn run_ffmpeg(
 
 /// Copies a segment of a video file without re-encoding.
 pub async fn extract(input: &str, output: &str, start: f64, duration: f64) -> anyhow::Result<()> {
+    if start.is_finite() && start < 0.0 {
+        anyhow::bail!("extract start must be non-negative, got {start}");
+    }
+    if !duration.is_finite() || duration <= 0.0 {
+        anyhow::bail!("extract duration must be positive, got {duration}");
+    }
+
     let args = vec![
         "-y".to_string(),
         "-ss".into(),
@@ -194,7 +200,7 @@ pub async fn concat(inputs: &[String], output: &str) -> anyhow::Result<()> {
     let list_path = make_concat_list_path(output);
     let list_body = inputs
         .iter()
-        .map(|path| format!("file '{}'", path.replace('\'', "'\\''")))
+        .map(|path| format!("file '{}'", escape_concat_path(path)))
         .collect::<Vec<_>>()
         .join("\n");
     std::fs::write(&list_path, format!("{list_body}\n"))?;
@@ -285,14 +291,13 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
         args.extend(["-preset".into(), job.preset.clone()]);
     }
 
-    if let Some(ref res) = job.resolution {
-        if res.width > 0 && res.height > 0 {
+    if let Some(ref res) = job.resolution
+        && res.width > 0 && res.height > 0 {
             args.extend([
                 "-vf".into(),
                 format!("scale={}:{}:flags=lanczos", res.width, res.height),
             ]);
         }
-    }
 
     args.extend(job.extra_args.iter().cloned());
 
@@ -305,6 +310,13 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
     }
 
     Ok(args)
+}
+
+/// Escape a path for use inside single quotes in an FFmpeg concat list file.
+/// The concat demuxer treats backslash as an escape character, so both
+/// backslashes and single quotes must be escaped.
+fn escape_concat_path(path: &str) -> String {
+    path.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
 fn make_passlog_prefix(output: &str) -> PathBuf {

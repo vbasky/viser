@@ -461,6 +461,9 @@ struct PerSegmentAnalyzeArgs {
     /// Max iterations per segment
     #[arg(long, default_value_t = 3)]
     max_iter: i32,
+    /// Segment duration in seconds
+    #[arg(long, default_value_t = 1.0)]
+    segment_duration: f64,
 }
 
 // ── Context-Aware ──
@@ -1323,20 +1326,18 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
     if args.bufsize_factor <= 0.0 {
         anyhow::bail!("--bufsize-factor must be greater than zero");
     }
-    if let Some(chunk_seconds) = args.chunk_seconds {
-        if chunk_seconds <= 0.0 {
+    if let Some(chunk_seconds) = args.chunk_seconds
+        && chunk_seconds <= 0.0 {
             anyhow::bail!("--chunk-seconds must be greater than zero");
         }
-    }
 
-    if let Some(video) = result.source_info.video_stream() {
-        if video.is_hdr() && !args.allow_hdr {
+    if let Some(video) = result.source_info.video_stream()
+        && video.is_hdr() && !args.allow_hdr {
             anyhow::bail!(
                 "HDR source detected ({}) in analysis/source. Delivery currently requires --allow-hdr for best-effort output.",
                 video.hdr_kind().unwrap_or("HDR")
             );
         }
-    }
 
     let preset = args.preset.unwrap_or_else(|| result.config.encoding.preset.clone());
     std::fs::create_dir_all(&args.output_dir)?;
@@ -1567,7 +1568,11 @@ async fn cmd_persegment_analyze(args: PerSegmentAnalyzeArgs) -> anyhow::Result<(
         codec,
         resolution: None,
         preset: args.preset,
-        segment_duration: Duration::from_secs(2),
+        segment_duration: Duration::from_secs_f64(if args.segment_duration > 0.0 {
+            args.segment_duration
+        } else {
+            1.0
+        }),
         max_iterations: args.max_iter,
     };
 
@@ -1941,7 +1946,15 @@ async fn cmd_inspect_loudness(file: &str) -> anyhow::Result<()> {
     println!("{}", "-".repeat(30));
     for line in stderr.lines() {
         let line = line.trim();
-        if line.starts_with("I:") || line.starts_with("LRA:") || line.starts_with("L") {
+        // ebur128 summary labels: integrated (I:), loudness range (LRA:, LRA low:,
+        // LRA high:), gating thresholds (Threshold:), and true peak (Peak:). The
+        // old `starts_with("L")` caught the "Loudness range:" header noise while
+        // missing the true-peak and threshold lines (they start with P/T).
+        if line.starts_with("I:")
+            || line.starts_with("LRA")
+            || line.starts_with("Threshold:")
+            || line.starts_with("Peak:")
+        {
             println!("  {line}");
         }
     }

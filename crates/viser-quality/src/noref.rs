@@ -177,7 +177,7 @@ pub async fn measure_noref(input: &str, opts: &NoRefOpts) -> anyhow::Result<NoRe
     loop {
         match stdout.read_exact(&mut buf).await {
             Ok(_) => {
-                if idx % stride == 0 {
+                if idx.is_multiple_of(stride) {
                     sharp.push(variance_of_laplacian(&buf, w, h));
                     block.push(blockiness(&buf, w, h));
                     noise.push(noise_sigma(&buf, w, h));

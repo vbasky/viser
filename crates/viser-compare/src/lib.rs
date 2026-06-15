@@ -67,7 +67,11 @@ pub struct PlayerData {
 const PLAYER_HTML: &str = include_str!("player.html");
 
 /// Loads per-frame VMAF data from a JSON file.
-pub fn load_vmaf_data(path: &str) -> anyhow::Result<Vec<FrameVmaf>> {
+///
+/// `fps` is the source frame rate, used to convert frame indices to presentation
+/// timestamps; values <= 0 fall back to 24 fps.
+pub fn load_vmaf_data(path: &str, fps: f64) -> anyhow::Result<Vec<FrameVmaf>> {
+    let fps = if fps > 0.0 { fps } else { 24.0 };
     let data = std::fs::read(path)?;
 
     // Try quality.Result format
@@ -84,19 +88,18 @@ pub fn load_vmaf_data(path: &str) -> anyhow::Result<Vec<FrameVmaf>> {
         vmaf: f64,
     }
 
-    if let Ok(result) = serde_json::from_slice::<QualResult>(&data) {
-        if !result.frames.is_empty() {
+    if let Ok(result) = serde_json::from_slice::<QualResult>(&data)
+        && !result.frames.is_empty() {
             return Ok(result
                 .frames
                 .into_iter()
                 .map(|f| FrameVmaf {
                     frame: f.frame_num,
-                    time: f.frame_num as f64 / 24.0,
+                    time: f.frame_num as f64 / fps,
                     vmaf: f.vmaf,
                 })
                 .collect());
         }
-    }
 
     // Try libvmaf raw format
     #[derive(Deserialize)]
@@ -116,7 +119,7 @@ pub fn load_vmaf_data(path: &str) -> anyhow::Result<Vec<FrameVmaf>> {
         .into_iter()
         .map(|f| FrameVmaf {
             frame: f.frame_num,
-            time: f.frame_num as f64 / 24.0,
+            time: f.frame_num as f64 / fps,
             vmaf: f.metrics.get("vmaf").copied().unwrap_or(0.0),
         })
         .collect())
@@ -172,8 +175,15 @@ pub async fn serve(opts: Opts) -> anyhow::Result<()> {
         max_vmaf: 0.0,
     };
 
-    if !opts.vmaf_data.is_empty() {
-        if let Ok(frames) = load_vmaf_data(&opts.vmaf_data) {
+    // Probe the reference for its real frame rate so dip timestamps line up with
+    // the video timeline regardless of fps (24/25/30/50/60...).
+    let fps = match viser_ffmpeg::probe(&opts.reference).await {
+        Ok(p) => p.streams.iter().find(|s| s.codec_type == "video").map(|s| s.fps()).unwrap_or(0.0),
+        Err(_) => 0.0,
+    };
+
+    if !opts.vmaf_data.is_empty()
+        && let Ok(frames) = load_vmaf_data(&opts.vmaf_data, fps) {
             player_data.dips = find_dips(&frames, 5.0, 10.0);
             if !frames.is_empty() {
                 let sum: f64 = frames.iter().map(|f| f.vmaf).sum();
@@ -183,7 +193,6 @@ pub async fn serve(opts: Opts) -> anyhow::Result<()> {
             }
             player_data.frames = frames;
         }
-    }
 
     let port = if opts.port == 0 { 8787 } else { opts.port };
     let ref_path = opts.reference.clone();
