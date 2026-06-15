@@ -100,7 +100,7 @@ the [releases page](https://github.com/vbasky/viser/releases).
 # Build viser
 cargo build --release
 
-# Run tests (170+ tests, ~0.5s)
+# Run tests (470+ tests)
 cargo test --workspace
 
 # Run your first per-title analysis
@@ -143,12 +143,19 @@ viser per-shot detect -i video.mp4 --threshold 10
 
 # Run per-shot analysis with Trellis optimization
 viser per-shot analyze -i video.mp4 --target-bitrate 2000
+
+# Pick a VMAF model and allow best-effort analysis of HDR sources
+viser per-shot analyze -i video.mp4 --target-bitrate 2000 \
+  --vmaf-model vmaf_v0.6.1 --allow-hdr
 ```
 
 ### Segment-level CRF adaptation
 
 ```bash
 viser per-segment analyze -i video.mp4 --target-vmaf 93 --codec libx264
+
+# Tune the segment length (seconds; default 1)
+viser per-segment analyze -i video.mp4 --target-vmaf 93 --segment-duration 2
 ```
 
 ### Context-aware encoding (device-specific ladders)
@@ -309,19 +316,19 @@ three additional features shipped since 0.3.0.
 
 ### Test Suite
 
-The workspace contains **170+ tests** covering:
+The workspace contains **470+ tests** covering:
 
 ```bash
 # Run all tests
 cargo test --workspace
 
 # Run tests for specific algorithm crates
-cargo test -p viser-hull        # convex hull, BD-rate (24 tests)
-cargo test -p viser-ladder       # ladder selection, crossover, savings (19 tests)
-cargo test -p viser-pershot      # Trellis optimization (12 tests)
-cargo test -p viser-complexity   # complexity analysis + screen content detection (21 tests)
-cargo test -p viser-ffmpeg       # probe, encode args, revelo adapter (26 tests)
-cargo test -p viser-encoding     # config validation, preset mapping (13 tests)
+cargo test -p viser-hull        # convex hull, BD-rate (33 tests)
+cargo test -p viser-ladder       # ladder selection, crossover, savings (26 tests)
+cargo test -p viser-pershot      # Trellis optimization (14 tests)
+cargo test -p viser-complexity   # complexity analysis + screen content detection (29 tests)
+cargo test -p viser-ffmpeg       # probe, encode args, revelo adapter (200+ tests)
+cargo test -p viser-encoding     # config validation, preset mapping (17 tests)
 
 # Run with revelo probe engine enabled
 cargo test --features revelo -p viser-ffmpeg -p viser-cli
