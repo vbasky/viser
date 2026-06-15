@@ -425,6 +425,12 @@ struct PerShotAnalyzeArgs {
     /// Target average bitrate for Trellis (kbps)
     #[arg(long, default_value_t = 2000.0)]
     target_bitrate: f64,
+    /// VMAF model version name (e.g. "vmaf_v0.6.1")
+    #[arg(long, default_value = "")]
+    vmaf_model: String,
+    /// Allow best-effort analysis on HDR sources
+    #[arg(long)]
+    allow_hdr: bool,
 }
 
 // ── Per-Segment ──
@@ -1578,7 +1584,11 @@ async fn cmd_persegment_analyze(args: PerSegmentAnalyzeArgs) -> anyhow::Result<(
         codec,
         resolution: None,
         preset: args.preset,
-        segment_duration: Duration::from_secs(2),
+        segment_duration: Duration::from_secs_f64(if args.segment_duration > 0.0 {
+            args.segment_duration
+        } else {
+            1.0
+        }),
         max_iterations: args.max_iter,
     };
 
