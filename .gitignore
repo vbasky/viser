@@ -7,3 +7,6 @@ Cargo.lock
 coverage.lcov
 coverage.json
 *.profraw
+
+# serena MCP local cache
+.serena/
