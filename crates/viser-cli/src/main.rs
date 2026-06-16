@@ -239,6 +239,38 @@ impl From<PoolArg> for viser_quality::PoolStrategy {
     }
 }
 
+/// Quality metric to optimize the ladder/hull on during analysis.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum OptMetricArg {
+    /// Netflix VMAF — most accurate, slowest to measure.
+    Vmaf,
+    /// Luma PSNR via FFmpeg's native filter — much faster than VMAF.
+    Psnr,
+    /// SSIM via FFmpeg's native filter — much faster than VMAF.
+    Ssim,
+}
+
+impl From<OptMetricArg> for viser_quality::Metric {
+    fn from(m: OptMetricArg) -> Self {
+        match m {
+            OptMetricArg::Vmaf => viser_quality::Metric::Vmaf,
+            OptMetricArg::Psnr => viser_quality::Metric::Psnr,
+            OptMetricArg::Ssim => viser_quality::Metric::Ssim,
+        }
+    }
+}
+
+impl OptMetricArg {
+    /// Upper-case display label for the optimization axis (e.g. in result tables).
+    fn label(self) -> &'static str {
+        match self {
+            OptMetricArg::Vmaf => "VMAF",
+            OptMetricArg::Psnr => "PSNR",
+            OptMetricArg::Ssim => "SSIM",
+        }
+    }
+}
+
 /// Machine-readable report format for `metrics compare`.
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 enum ReportFormat {
@@ -314,6 +346,9 @@ struct PerTitleAnalyzeArgs {
     /// VMAF frame subsampling
     #[arg(long, default_value_t = 5)]
     subsample: i32,
+    /// Quality metric to optimize on (psnr/ssim are far faster than vmaf)
+    #[arg(long, value_enum, default_value = "vmaf")]
+    metric: OptMetricArg,
     /// Max parallel encodes
     #[arg(long, default_value_t = 2)]
     parallel: i32,
@@ -432,6 +467,15 @@ struct PerShotAnalyzeArgs {
     /// VMAF model version name (e.g. "vmaf_v0.6.1")
     #[arg(long, default_value = "")]
     vmaf_model: String,
+    /// Quality-metric frame subsampling (every Nth frame; higher = faster, less accurate)
+    #[arg(long, default_value_t = 5)]
+    subsample: i32,
+    /// Quality metric to optimize on (psnr/ssim are far faster than vmaf)
+    #[arg(long, value_enum, default_value = "vmaf")]
+    metric: OptMetricArg,
+    /// Max parallel shot analyses (0 = auto)
+    #[arg(long, default_value_t = 0)]
+    parallel: i32,
     /// Allow best-effort analysis on HDR sources
     #[arg(long)]
     allow_hdr: bool,
@@ -1279,6 +1323,7 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
         },
         checkpoint_path: String::new(),
         vmaf_model: String::new(),
+        opt_metric: args.metric.into(),
         allow_hdr: args.allow_hdr,
     };
 
@@ -1298,11 +1343,12 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let metric_label = args.metric.label();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<viser_pertitle::TrialProgress>(10);
     tokio::spawn(async move {
         while let Some(p) = rx.recv().await {
             eprint!(
-                "\r  [{}/{}] {} {} CRF {} -> {:.0} kbps, VMAF {:.1}    ",
+                "\r  [{}/{}] {} {} CRF {} -> {:.0} kbps, {metric_label} {:.1}    ",
                 p.done,
                 p.total,
                 p.resolution.label(),
@@ -1324,7 +1370,7 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
     println!("\n  Convex Hull ({} points):", result.hull.points.len());
     for p in &result.hull.points {
         println!(
-            "    {} {} CRF {} -> {:.0} kbps, VMAF {:.1}",
+            "    {} {} CRF {} -> {:.0} kbps, {metric_label} {:.1}",
             p.resolution.label(),
             p.codec.as_str(),
             p.crf,
@@ -1337,7 +1383,7 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
         println!("\n  Optimized Ladder ({} rungs):", result.ladder.rungs.len());
         for r in &result.ladder.rungs {
             println!(
-                "    #{} {} {} CRF {} -> {:.0} kbps, VMAF {:.1}",
+                "    #{} {} {} CRF {} -> {:.0} kbps, {metric_label} {:.1}",
                 r.index + 1,
                 r.point.resolution.label(),
                 r.point.codec.as_str(),
@@ -1562,6 +1608,8 @@ async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs) -> anyhow::Result<()> {
             crf_values: args.crf_values,
             codecs,
             preset: args.preset,
+            subsample: args.subsample,
+            parallel: args.parallel,
             ..Default::default()
         },
         shot_opts: viser_shot::DetectOpts {
@@ -1570,9 +1618,11 @@ async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs) -> anyhow::Result<()> {
         },
         ladder_opts: viser_ladder::Opts::default(),
         vmaf_model: args.vmaf_model,
+        opt_metric: args.metric.into(),
         allow_hdr: args.allow_hdr,
     };
 
+    let metric_label = args.metric.label();
     println!("Viser Per-Shot Analysis\n  Source: {}", args.input);
 
     let result = viser_pershot::analyze(&args.input, cfg, None).await?;
@@ -1594,7 +1644,7 @@ async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs) -> anyhow::Result<()> {
         println!("\n  Trellis (target: {:.0} kbps):", args.target_bitrate);
         for a in &assignments {
             println!(
-                "    Shot {} -> {} {} CRF {} {:.0} kbps VMAF {:.1}",
+                "    Shot {} -> {} {} CRF {} {:.0} kbps {metric_label} {:.1}",
                 a.shot_index + 1,
                 a.resolution.label(),
                 a.codec.as_str(),

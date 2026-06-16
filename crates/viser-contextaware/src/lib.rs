@@ -102,6 +102,7 @@ pub async fn analyze(
             ladder_opts: profile.ladder_opts.clone(),
             vmaf_model: profile.vmaf_model.clone(),
             checkpoint_path: String::new(),
+            opt_metric: Default::default(),
             allow_hdr: false,
         };
 

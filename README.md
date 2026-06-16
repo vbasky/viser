@@ -136,6 +136,28 @@ reserves it in the delivery budget. HDR sources are detected and gated behind
 `--allow-hdr` (currently best-effort only). The analysis JSON includes an
 `audio_bitrate_kbps` field that delivery can use for budget planning.
 
+#### Faster analysis: metric and subsampling
+
+VMAF dominates analysis time. To iterate quickly, optimize on a cheaper metric
+and/or score fewer frames:
+
+```bash
+# Optimize on PSNR (or SSIM) — uses FFmpeg's native filters and skips libvmaf's
+# expensive feature extraction (~10-20x faster per measurement).
+viser per-title analyze -i video.mp4 --metric psnr
+
+# Score every 15th frame instead of every 5th (the default).
+viser per-title analyze -i video.mp4 --subsample 15
+
+# Stack them for the fastest iteration loop.
+viser per-title analyze -i video.mp4 --metric psnr --subsample 15
+```
+
+With `--metric psnr|ssim`, the chosen metric drives the hull/ladder selection and
+appears in the result table and the saved JSON's `metric` field. Note that PSNR/SSIM
+use different scales than VMAF, so re-confirm the final ladder on VMAF before trusting
+rung selection.
+
 ### Per-shot encoding (scene-level bit allocation)
 
 ```bash
@@ -148,6 +170,10 @@ viser per-shot analyze -i video.mp4 --target-bitrate 2000
 # Pick a VMAF model and allow best-effort analysis of HDR sources
 viser per-shot analyze -i video.mp4 --target-bitrate 2000 \
   --vmaf-model vmaf_v0.6.1 --allow-hdr
+
+# Speed up per-shot analysis: cheaper metric, coarser subsampling, more parallelism
+viser per-shot analyze -i video.mp4 --target-bitrate 2000 \
+  --metric psnr --subsample 15 --parallel 4
 ```
 
 ### Segment-level CRF adaptation

@@ -1,4 +1,23 @@
 # Changelog
+## [0.8.0] - 2026-06-16
+
+Faster analysis: choose a cheaper quality metric and expose subsampling controls.
+
+### Added
+
+- **`--metric vmaf|psnr|ssim`** on `per-title analyze` and `per-shot analyze` —
+  selects the quality metric that drives hull/ladder selection. PSNR and SSIM use
+  FFmpeg's native filters and bypass libvmaf's expensive feature extraction
+  (ADM/VIF/motion), running ~10-20x faster per measurement for quick iteration.
+  The chosen metric is recorded as a top-level `metric` field in the analysis JSON
+  and labels the result tables accordingly.
+- **`per-shot analyze --subsample`** — exposes quality-metric frame subsampling
+  (every Nth frame; default 5), previously only available on `per-title analyze`.
+- **`per-shot analyze --parallel`** — caps concurrent shot analyses (0 = auto).
+- **Native PSNR/SSIM measurement path** in `viser-quality::measure` — when only
+  PSNR and/or SSIM are requested, measurement uses FFmpeg's `psnr`/`ssim` filters
+  instead of libvmaf, honoring `subsample` via frame decimation.
+
 ## [0.7.1] - 2026-06-16
 
 Correctness fixes across shot detection, hardware encoding, probing, quality

@@ -18,10 +18,11 @@ pub use noref::{NoRefOpts, NoRefResult, measure_noref};
 pub use pool::{PoolStrategy, PooledStats};
 
 /// Quality metric type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Metric {
     /// Netflix VMAF perceptual score (0-100, higher is better).
+    #[default]
     Vmaf,
     /// Peak signal-to-noise ratio in dB (higher is better).
     Psnr,
@@ -189,6 +190,14 @@ pub async fn measure(
         opts.metrics.clone()
     };
 
+    // Fast path: when every requested metric is PSNR and/or SSIM, measure with
+    // FFmpeg's native `psnr`/`ssim` filters instead of libvmaf. libvmaf always
+    // runs the expensive VMAF feature extraction (ADM/VIF/motion) regardless of
+    // which `feature=`s ride along, so the native filters are ~10-20x cheaper.
+    if metrics.iter().all(|m| matches!(m, Metric::Psnr | Metric::Ssim)) {
+        return measure_native(reference, distorted, &metrics, &opts).await;
+    }
+
     let tmp = tempfile::Builder::new().prefix("viser-vmaf-").suffix(".json").tempfile()?;
     let log_path = tmp.path().to_string_lossy().to_string();
 
@@ -285,6 +294,100 @@ pub async fn measure(
     }
 
     Ok(result)
+}
+
+/// Measures PSNR and/or SSIM using FFmpeg's native filters, bypassing libvmaf.
+///
+/// Far cheaper than the libvmaf path because it skips VMAF feature extraction.
+/// `metrics` must be a non-empty subset of `{Psnr, Ssim}`; each metric runs in its
+/// own FFmpeg pass. Honors `opts.subsample` by decimating frames symmetrically with
+/// a `select` filter on both inputs before measuring. Populates only the requested
+/// scalar fields of `Result` (per-frame and pooled stats are left at their defaults).
+async fn measure_native(
+    reference: &str,
+    distorted: &str,
+    metrics: &[Metric],
+    opts: &MeasureOpts,
+) -> anyhow::Result<Result> {
+    let ref_info = if let Some(ref cache) = opts.probe_cache {
+        cache.probe(reference).await?
+    } else {
+        viser_ffmpeg::probe(reference).await?
+    };
+    let ref_video =
+        ref_info.video_stream().ok_or_else(|| anyhow::anyhow!("no video stream in reference"))?;
+
+    // When subsampling, decimate both inputs identically so the compared frames
+    // stay aligned; otherwise pass both through unchanged.
+    let sel = if opts.subsample > 1 {
+        format!("select=not(mod(n\\,{}))", opts.subsample)
+    } else {
+        "null".to_string()
+    };
+
+    let mut result = Result::default();
+    for m in metrics {
+        let filter_name = match m {
+            Metric::Psnr => "psnr",
+            Metric::Ssim => "ssim",
+            _ => continue,
+        };
+
+        let filtergraph = format!(
+            "[0:v]scale={}:{}:flags=bicubic,{sel}[dist];[1:v]{sel}[ref];[dist][ref]{filter_name}",
+            ref_video.width, ref_video.height
+        );
+        let args = ["-i", distorted, "-i", reference, "-lavfi", &filtergraph, "-f", "null", "-"];
+
+        let output = Command::new(ffmpeg_path())
+            .args(args)
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("ffmpeg {filter_name} measurement failed: {stderr}");
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        match m {
+            Metric::Psnr => {
+                let line = stderr
+                    .lines()
+                    .rev()
+                    .find(|l| l.contains("PSNR") && l.contains("average:"))
+                    .ok_or_else(|| anyhow::anyhow!("could not parse PSNR from ffmpeg output"))?;
+                result.psnr = parse_metric_kv(line, "y:").unwrap_or(0.0);
+                result.psnr_u = parse_metric_kv(line, "u:").unwrap_or(0.0);
+                result.psnr_v = parse_metric_kv(line, "v:").unwrap_or(0.0);
+                result.psnr_avg = parse_metric_kv(line, "average:").unwrap_or(result.psnr);
+            }
+            Metric::Ssim => {
+                let line = stderr
+                    .lines()
+                    .rev()
+                    .find(|l| l.contains("SSIM") && l.contains("All:"))
+                    .ok_or_else(|| anyhow::anyhow!("could not parse SSIM from ffmpeg output"))?;
+                result.ssim = parse_metric_kv(line, "All:").unwrap_or(0.0);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(result)
+}
+
+/// Parses the float following `key` in an FFmpeg filter summary line, e.g.
+/// `parse_metric_kv("PSNR y:40.12 average:41.5", "y:") == Some(40.12)`. Stops at the
+/// first character that cannot be part of a number, so trailing tokens like `(19.0)`
+/// after an SSIM value are ignored. Returns `None` for missing keys or `inf`/`nan`.
+fn parse_metric_kv(line: &str, key: &str) -> Option<f64> {
+    let start = line.find(key)? + key.len();
+    let rest = &line[start..];
+    let end = rest
+        .find(|c: char| !matches!(c, '0'..='9' | '.' | '-' | '+' | 'e' | 'E'))
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
 }
 
 // libvmaf JSON output structures

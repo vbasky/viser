@@ -32,6 +32,13 @@ pub struct Config {
     /// VMAF model name passed to the quality measurement; empty uses the default model.
     #[serde(default)]
     pub vmaf_model: String,
+    /// Quality metric optimized along the hull/ladder axis. VMAF (the default) is the
+    /// most accurate but by far the slowest to measure; PSNR and SSIM use FFmpeg's
+    /// native filters and run ~10-20x faster, useful for quick iteration. When this is
+    /// not VMAF, the chosen metric's score occupies the `vmaf` field of each `Point`,
+    /// so ladder min/max-VMAF thresholds are interpreted in that metric's units.
+    #[serde(default)]
+    pub opt_metric: Metric,
     /// Allow best-effort analysis of HDR sources instead of bailing out.
     #[serde(default)]
     pub allow_hdr: bool,
@@ -46,6 +53,11 @@ pub struct Result {
     pub source_info: ProbeResult,
     /// The configuration used for this analysis.
     pub config: Config,
+    /// The quality metric carried by each `Point`'s `vmaf` axis (and the hull/ladder).
+    /// VMAF unless `--metric` selected PSNR/SSIM; recorded so consumers interpret the
+    /// scores and any VMAF-named thresholds in the right units.
+    #[serde(default)]
+    pub metric: Metric,
     /// Every measured trial point (resolution/codec/CRF -> bitrate/quality).
     pub points: Vec<Point>,
     /// Convex upper hull across all measured points.
@@ -272,12 +284,17 @@ pub async fn analyze(
                 }
             };
 
-            // Measure quality
+            // Measure quality. For VMAF, PSNR rides along cheaply; for PSNR/SSIM we
+            // measure only that metric via the native (libvmaf-free) fast path.
+            let metrics = match cfg.opt_metric {
+                Metric::Vmaf => vec![Metric::Vmaf, Metric::Psnr],
+                m => vec![m],
+            };
             let q_result = match viser_quality::measure(
                 &source,
                 &out_path.to_string_lossy(),
                 MeasureOpts {
-                    metrics: vec![Metric::Vmaf, Metric::Psnr],
+                    metrics,
                     subsample: cfg.encoding.subsample,
                     model: cfg.vmaf_model.clone(),
                     probe_cache: Some(probe_cache.clone()),
@@ -314,14 +331,21 @@ pub async fn analyze(
 
             let _ = std::fs::remove_file(&out_path);
 
+            // The hull/ladder optimize along the `vmaf` field; when a different metric
+            // was chosen, its score takes that axis so downstream code is unchanged.
+            let opt_score = match cfg.opt_metric {
+                Metric::Psnr => q_result.psnr,
+                Metric::Ssim => q_result.ssim,
+                _ => q_result.vmaf,
+            };
             let p = Point {
                 resolution: t.resolution,
                 codec: t.codec,
                 crf: t.crf,
                 bitrate: enc_result.bitrate,
-                vmaf: q_result.vmaf,
+                vmaf: opt_score,
                 psnr: q_result.psnr,
-                ssim: 0.0,
+                ssim: q_result.ssim,
             };
 
             if let Some(ref cp) = cp
@@ -373,6 +397,7 @@ pub async fn analyze(
     Ok(Result {
         source: source.to_string(),
         source_info: source_info.clone(),
+        metric: cfg.opt_metric,
         config: cfg,
         points,
         hull: all_hull,

@@ -1615,6 +1615,7 @@ dependencies = [
  "viser-hull",
  "viser-ladder",
  "viser-pertitle",
+ "viser-quality",
  "viser-shot",
 ]
 

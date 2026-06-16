@@ -30,6 +30,9 @@ pub struct Config {
     pub ladder_opts: LadderOpts,
     /// VMAF model name passed to the quality measurement; empty uses the default model.
     pub vmaf_model: String,
+    /// Quality metric optimized along each shot's hull. VMAF (the default) is the most
+    /// accurate but slowest; PSNR/SSIM use native FFmpeg filters and run far faster.
+    pub opt_metric: viser_quality::Metric,
     /// Allow best-effort analysis of HDR sources instead of bailing out.
     pub allow_hdr: bool,
 }
@@ -43,6 +46,7 @@ impl Default for Config {
             shot_opts: DetectOpts::default(),
             ladder_opts: LadderOpts::default(),
             vmaf_model: String::new(),
+            opt_metric: viser_quality::Metric::default(),
             allow_hdr: false,
         }
     }
@@ -64,6 +68,10 @@ pub struct ShotResult {
 pub struct Result {
     /// Path to the analyzed source video.
     pub source: String,
+    /// The quality metric carried by each shot `Point`'s `vmaf` axis. VMAF unless
+    /// `--metric` selected PSNR/SSIM; recorded so consumers read the scores correctly.
+    #[serde(default)]
+    pub metric: viser_quality::Metric,
     /// Per-shot analysis results in shot order.
     pub shots: Vec<ShotResult>,
     /// Wall-clock duration of the full per-shot analysis.
@@ -142,6 +150,7 @@ pub async fn analyze(
             ladder_opts: cfg.ladder_opts.clone(),
             checkpoint_path: String::new(),
             vmaf_model: cfg.vmaf_model.clone(),
+            opt_metric: cfg.opt_metric,
             allow_hdr: cfg.allow_hdr,
         };
         let sender = sender.clone();
@@ -171,6 +180,7 @@ pub async fn analyze(
 
     Ok(Result {
         source: source.to_string(),
+        metric: cfg.opt_metric,
         shots: shot_results,
         duration: start.elapsed(),
         shot_count: shots.len(),
