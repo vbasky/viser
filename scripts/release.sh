@@ -70,9 +70,10 @@ for crate in "${CRATES[@]}"; do
     perl -i -pe "s/(${crate//-/\\-} = \{ .*?)version = \"[^\"]+\"/\${1}version = \"$VERSION\"/" "crates/"*/Cargo.toml
 done
 
-# Commit and tag
+# Commit and tag. Use a lowercase conventional-commit message ("chore: release
+# X.Y.Z") to match the rest of the history (feat:/fix:/docs:/chore:).
 git add -A
-git commit -m "Release v$VERSION"
+git commit -m "chore: release $VERSION"
 git tag "v$VERSION"
 
 # Push (triggers CI binary build + GitHub Release)
