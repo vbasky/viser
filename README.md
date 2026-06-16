@@ -76,8 +76,9 @@ cargo install viser-cli
 # With optional revelo probe engine (pure-Rust, no ffprobe needed)
 cargo install viser-cli --features revelo
 
-# Homebrew (once accepted into homebrew-core)
-brew install viser
+# Homebrew (from my tap)
+brew install vbasky/viser/viser
+# or: brew tap vbasky/viser && brew install viser
 
 # Or build from source
 git clone https://github.com/vbasky/viser.git
