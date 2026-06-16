@@ -57,9 +57,12 @@ if ! awk -v ver="$VERSION" \
     exit 1
 fi
 
-# Bump version in all crate Cargo.tomls
+# Bump the [package] version in all crate Cargo.tomls. Only the FIRST `version =`
+# line is touched (the package version, which precedes any [dependencies.*] table),
+# so external deps declared in table form — e.g. [dependencies.revelo] — keep their
+# own version.
 for crate in "${CRATES[@]}"; do
-    perl -i -pe "s/^version = \"[^\"]+\"/version = \"$VERSION\"/" "crates/$crate/Cargo.toml"
+    perl -i -pe "if (!\$bumped && s/^version = \"[^\"]+\"/version = \"$VERSION\"/) { \$bumped = 1 }" "crates/$crate/Cargo.toml"
 done
 
 # Update workspace root version references (intra-workspace deps)
