@@ -11,6 +11,8 @@
 [![License](https://img.shields.io/github/license/vbasky/viser)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-blue)](https://www.rust-lang.org)
 [![Read the write-up](https://img.shields.io/badge/Medium-Read%20the%20write--up-black?logo=medium&logoColor=white)](https://medium.com/@vbasky/measure-dont-guess-building-viser-a-content-adaptive-video-encoding-optimizer-in-rust-7675edd6943a)
+[![Stars](https://img.shields.io/github/stars/vbasky/viser?style=social)](https://github.com/vbasky/viser/stargazers)
+[![Follow @vbasky](https://img.shields.io/github/followers/vbasky?style=social&label=Follow%20%40vbasky)](https://github.com/vbasky)
 
 **Acknowledgment:** viser builds on decades of research in rate-distortion theory,
 perceptual quality measurement, and content-adaptive streaming. Thank you to the
