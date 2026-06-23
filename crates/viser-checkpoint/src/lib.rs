@@ -4,12 +4,12 @@
 //! and can be resumed. A SHA-256 `config_hash` of the encoding parameters invalidates stale
 //! checkpoints when the configuration changes. Writes are atomic (temp file + rename).
 
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use viser_hull::Point;
 
 /// On-disk checkpoint contents: config fingerprint, source, and completed trial results.
@@ -58,13 +58,13 @@ impl Checkpoint {
 
     /// Returns whether a trial for the given resolution/codec/CRF has been completed.
     pub fn is_completed(&self, resolution: &str, codec: &str, crf: i32) -> bool {
-        let inner = self.mu.lock().unwrap();
+        let inner = self.mu.lock();
         inner.state.completed.contains_key(&make_key(resolution, codec, crf))
     }
 
     /// Returns the stored result for the given resolution/codec/CRF, if completed.
     pub fn get(&self, resolution: &str, codec: &str, crf: i32) -> Option<Point> {
-        let inner = self.mu.lock().unwrap();
+        let inner = self.mu.lock();
         inner.state.completed.get(&make_key(resolution, codec, crf)).cloned()
     }
 
@@ -76,7 +76,7 @@ impl Checkpoint {
         crf: i32,
         point: Point,
     ) -> anyhow::Result<()> {
-        let mut inner = self.mu.lock().unwrap();
+        let mut inner = self.mu.lock();
         inner.state.completed.insert(make_key(resolution, codec, crf), point);
         inner.dirty = true;
         flush_locked(&mut inner)
@@ -84,19 +84,19 @@ impl Checkpoint {
 
     /// Returns the number of completed trials stored in the checkpoint.
     pub fn completed_count(&self) -> usize {
-        let inner = self.mu.lock().unwrap();
+        let inner = self.mu.lock();
         inner.state.completed.len()
     }
 
     /// Returns a copy of all completed trial results.
     pub fn all_completed(&self) -> Vec<Point> {
-        let inner = self.mu.lock().unwrap();
+        let inner = self.mu.lock();
         inner.state.completed.values().cloned().collect()
     }
 
     /// Deletes the checkpoint file from disk.
     pub fn remove(&self) -> anyhow::Result<()> {
-        let inner = self.mu.lock().unwrap();
+        let inner = self.mu.lock();
         fs::remove_file(&inner.path)?;
         Ok(())
     }

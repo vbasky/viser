@@ -153,7 +153,7 @@ fn build_shots(
         };
 
         if s.duration < min_duration && !shots.is_empty() {
-            let last: &mut Shot = shots.last_mut().unwrap();
+            let last: &mut Shot = shots.last_mut().expect("non-empty shots");
             last.end = sc.pts;
             last.duration = sc.pts.saturating_sub(last.start);
         } else {
@@ -173,7 +173,7 @@ fn build_shots(
             score: 0.0,
         };
         if s.duration < min_duration && !shots.is_empty() {
-            let last: &mut Shot = shots.last_mut().unwrap();
+            let last: &mut Shot = shots.last_mut().expect("non-empty shots");
             last.end = total_duration;
             last.duration = total_duration.saturating_sub(last.start);
         } else {

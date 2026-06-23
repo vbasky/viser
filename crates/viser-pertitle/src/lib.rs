@@ -200,7 +200,7 @@ pub async fn analyze(
     let done = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let total = trials.len();
 
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
 
     for t in trials {
         let sem = semaphore.clone();
@@ -214,8 +214,8 @@ pub async fn analyze(
         let warnings = warnings.clone();
         let done = done.clone();
 
-        handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+        set.spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
 
             // Check checkpoint
             if let Some(ref cp) = cp
@@ -366,15 +366,21 @@ pub async fn analyze(
                 vmaf: p.vmaf,
                 error: None,
             });
-        }));
+        });
     }
 
-    for h in handles {
-        h.await?;
+    while let Some(res) = set.join_next().await {
+        // Propagate only if the task itself panicked (JoinError). Inner errors are
+        // already recorded as warnings inside the task.
+        res?;
     }
 
-    let points = Arc::try_unwrap(points).unwrap().into_inner();
-    let warnings = Arc::try_unwrap(warnings).unwrap().into_inner();
+    let points = Arc::into_inner(points)
+        .expect("all spawn handles joined, Arc should be uniquely owned")
+        .into_inner();
+    let warnings = Arc::into_inner(warnings)
+        .expect("all spawn handles joined, Arc should be uniquely owned")
+        .into_inner();
 
     if points.is_empty() {
         anyhow::bail!("all {total} trials failed; check warnings");

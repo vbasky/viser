@@ -1,4 +1,23 @@
 # Changelog
+## [0.8.1] - 2026-06-23
+
+Robustness, safety, and interrupt-handling fixes for long-running per-title/per-shot/per-segment analyses.
+
+### Fixed
+
+- **Float NaN/Inf panics in ordering** — all `f64::partial_cmp(...).unwrap()` sites (convex hull construction, ladder selection, BD-rate, dip sorting, test invariants) replaced with `f64::total_cmp`. Added non-empty guards and filtering improvements around `first()`/`last()` after sorts.
+- **Checkpoint mutex poisoning** — replaced `std::sync::Mutex` with `parking_lot::Mutex`. All lock sites are now infallible; previous poison-recovery `unwrap_or_else` removed.
+- **Fragile Arc ownership after parallel joins** — replaced `Arc::try_unwrap(...).unwrap().into_inner()` with `Arc::into_inner(...).expect(...)` (per-title analysis).
+- **Two-pass passlog leaks** — `PasslogCleanup` now implements `Drop` so ffmpeg two-pass log files are always cleaned, even on error, `?` return, or panic. Manual `cleanup.run()` call removed.
+- **Per-segment parallelism ignored config** — `per-segment analyze` now respects `Config.parallel` (and the new `--parallel` CLI flag); previously always hardcoded `available_parallelism()`.
+- **Worker tasks survived cancellation** — converted per-title, per-shot, and per-segment parallel loops to `tokio::task::JoinSet`. Dropping the set aborts in-flight tasks.
+- **No graceful Ctrl-C handling** — top-level command dispatch now uses `tokio::select!` on `ctrl_c()`. Interrupt drops futures (triggering all RAII), aborts JoinSet tasks, and prints checkpoint resume guidance. Added `signal` feature to tokio in `viser-cli`.
+
+### Changed
+
+- `viser-checkpoint` depends on `parking_lot = "0.12"`.
+- Semaphore acquires and guarded `last_mut` accesses in shot detection now use descriptive `.expect(...)`.
+
 ## [0.8.0] - 2026-06-16
 
 Faster analysis: choose a cheaper quality metric and expose subsampling controls.

@@ -518,6 +518,9 @@ struct PerSegmentAnalyzeArgs {
     /// Segment duration in seconds
     #[arg(long, default_value_t = 1.0)]
     segment_duration: f64,
+    /// Max parallel segment encodes (0 = auto)
+    #[arg(long, default_value_t = 0)]
+    parallel: i32,
 }
 
 // ── Context-Aware ──
@@ -630,39 +633,55 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    match command {
-        Commands::Encode(args) => cmd_encode(args).await,
-        Commands::Inspect { command } => match command {
-            InspectCommands::Probe { file, probe_engine } => {
-                cmd_inspect_probe(&file, &probe_engine).await
-            }
-            InspectCommands::BlackFrames { file, duration } => {
-                cmd_inspect_blackframes(&file, duration).await
-            }
-            InspectCommands::Loudness { file } => cmd_inspect_loudness(&file).await,
-        },
-        Commands::Quality { command } => match command {
-            QualityCommands::Measure(args) => cmd_quality_measure(args).await,
-        },
-        Commands::PerTitle { command } => match command {
-            PerTitleCommands::Analyze(args) => cmd_pertitle_analyze(args).await,
-            PerTitleCommands::Deliver(args) => cmd_pertitle_deliver(args).await,
-        },
-        Commands::PerShot { command } => match command {
-            PerShotCommands::Detect(args) => cmd_pershot_detect(args).await,
-            PerShotCommands::Analyze(args) => cmd_pershot_analyze(args).await,
-        },
-        Commands::PerSegment { command } => match command {
-            PerSegmentCommands::Analyze(args) => cmd_persegment_analyze(args).await,
-        },
-        Commands::ContextAware { command } => match command {
-            ContextAwareCommands::Analyze(args) => cmd_contextaware_analyze(args).await,
-        },
-        Commands::Compare(args) => cmd_compare(args).await,
-        Commands::Metrics { command } => match command {
-            MetricsCommands::Compare(args) => cmd_metrics_compare(args).await,
-            MetricsCommands::NoRef(args) => cmd_metrics_noref(args).await,
-        },
+    // Wrap command execution so Ctrl-C can trigger clean drops (temps, cleanup guards)
+    // and give the user a useful message. Checkpoints are written incrementally to disk,
+    // so partial progress is usually resumable even on hard kill.
+    let cmd_future = async move {
+        match command {
+            Commands::Encode(args) => cmd_encode(args).await,
+            Commands::Inspect { command } => match command {
+                InspectCommands::Probe { file, probe_engine } => {
+                    cmd_inspect_probe(&file, &probe_engine).await
+                }
+                InspectCommands::BlackFrames { file, duration } => {
+                    cmd_inspect_blackframes(&file, duration).await
+                }
+                InspectCommands::Loudness { file } => cmd_inspect_loudness(&file).await,
+            },
+            Commands::Quality { command } => match command {
+                QualityCommands::Measure(args) => cmd_quality_measure(args).await,
+            },
+            Commands::PerTitle { command } => match command {
+                PerTitleCommands::Analyze(args) => cmd_pertitle_analyze(args).await,
+                PerTitleCommands::Deliver(args) => cmd_pertitle_deliver(args).await,
+            },
+            Commands::PerShot { command } => match command {
+                PerShotCommands::Detect(args) => cmd_pershot_detect(args).await,
+                PerShotCommands::Analyze(args) => cmd_pershot_analyze(args).await,
+            },
+            Commands::PerSegment { command } => match command {
+                PerSegmentCommands::Analyze(args) => cmd_persegment_analyze(args).await,
+            },
+            Commands::ContextAware { command } => match command {
+                ContextAwareCommands::Analyze(args) => cmd_contextaware_analyze(args).await,
+            },
+            Commands::Compare(args) => cmd_compare(args).await,
+            Commands::Metrics { command } => match command {
+                MetricsCommands::Compare(args) => cmd_metrics_compare(args).await,
+                MetricsCommands::NoRef(args) => cmd_metrics_noref(args).await,
+            },
+        }
+    };
+
+    tokio::select! {
+        res = cmd_future => res,
+        _ = tokio::signal::ctrl_c() => {
+            eprintln!("\n\nInterrupted (Ctrl+C or SIGINT).");
+            eprintln!("  - Checkpoints (when enabled via --checkpoint) contain completed trials and support resume.");
+            eprintln!("  - Temp directories will be cleaned automatically on next run (or by the stale cleaner).");
+            eprintln!("  - In-flight encodes may continue briefly until their processes exit; use pkill if needed.");
+            Ok(())
+        }
     }
 }
 
@@ -1673,6 +1692,7 @@ async fn cmd_persegment_analyze(args: PerSegmentAnalyzeArgs) -> anyhow::Result<(
             1.0
         }),
         max_iterations: args.max_iter,
+        parallel: args.parallel,
     };
 
     println!("Viser Segment-Level CRF Adaptation");

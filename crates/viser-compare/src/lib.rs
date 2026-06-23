@@ -153,7 +153,7 @@ pub fn find_dips(
         .collect();
 
     if dips.len() > 50 {
-        dips.sort_by(|a, b| a.vmaf.partial_cmp(&b.vmaf).unwrap());
+        dips.sort_by(|a, b| a.vmaf.total_cmp(&b.vmaf));
         dips.truncate(50);
     }
 

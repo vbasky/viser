@@ -19,14 +19,14 @@ pub fn bd_rate(curve_a: &[Point], curve_b: &[Point]) -> Result<f64, BdRateError>
         .iter()
         .copied()
         .reduce(f64::min)
-        .unwrap()
-        .max(b_quality.iter().copied().reduce(f64::min).unwrap());
+        .expect("non-empty after len>=4 check")
+        .max(b_quality.iter().copied().reduce(f64::min).expect("non-empty after len>=4 check"));
     let max_q = a_quality
         .iter()
         .copied()
         .reduce(f64::max)
-        .unwrap()
-        .min(b_quality.iter().copied().reduce(f64::max).unwrap());
+        .expect("non-empty after len>=4 check")
+        .min(b_quality.iter().copied().reduce(f64::max).expect("non-empty after len>=4 check"));
 
     if min_q >= max_q {
         return Err(BdRateError("no overlapping quality range between curves".into()));
@@ -58,7 +58,7 @@ impl std::error::Error for BdRateError {}
 
 fn extract_rd(points: &[Point]) -> (Vec<f64>, Vec<f64>) {
     let mut pairs: Vec<(f64, f64)> = points.iter().map(|p| (p.vmaf, p.bitrate.log10())).collect();
-    pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     let quality: Vec<f64> = pairs.iter().map(|p| p.0).collect();
     let log_rate: Vec<f64> = pairs.iter().map(|p| p.1).collect();

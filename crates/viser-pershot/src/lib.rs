@@ -142,7 +142,7 @@ pub async fn analyze(
         segment_paths.push((i, seg_path, seg_str, s.clone()));
     }
 
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
     for (i, seg_path, seg_str, s) in segment_paths {
         let sem = semaphore.clone();
         let shot_cfg = viser_pertitle::Config {
@@ -156,8 +156,8 @@ pub async fn analyze(
         let sender = sender.clone();
         let shots_len = shots.len();
 
-        handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+        set.spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
             let shot_analysis = viser_pertitle::analyze(&seg_str, shot_cfg, None).await?;
             let _ = std::fs::remove_file(&seg_path);
             sender.send(Progress { shot_done: i + 1, shot_total: shots_len, shot_index: i });
@@ -166,13 +166,13 @@ pub async fn analyze(
                 ShotResult { shot: s, points: shot_analysis.points, hull: shot_analysis.hull },
                 shot_analysis.trial_count,
             ))
-        }));
+        });
     }
 
     let mut shot_results: Vec<Option<ShotResult>> = vec![None; shots.len()];
     let mut total_trials = 0;
-    for h in handles {
-        let (i, result, trials) = h.await??;
+    while let Some(res) = set.join_next().await {
+        let (i, result, trials) = res??;
         shot_results[i] = Some(result);
         total_trials += trials;
     }

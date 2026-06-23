@@ -92,16 +92,15 @@ async fn encode_two_pass(
     }
 
     let passlog_prefix = make_passlog_prefix(&job.output);
-    let cleanup = PasslogCleanup::new(passlog_prefix.clone());
+    let _cleanup = PasslogCleanup::new(passlog_prefix.clone());
 
     let first_pass_args = build_encode_args(&job, EncodePass::First(&passlog_prefix))?;
     run_ffmpeg(first_pass_args, None).await?;
 
     let second_pass_args = build_encode_args(&job, EncodePass::Second(&passlog_prefix))?;
-    let result = run_encode(job, second_pass_args, progress_tx).await;
 
-    cleanup.run();
-    result
+    // cleanup performed by Drop (RAII) even on error/early return/panic
+    run_encode(job, second_pass_args, progress_tx).await
 }
 
 async fn run_encode(
@@ -576,6 +575,12 @@ impl PasslogCleanup {
                 tracing::debug!(?path, ?err, "failed to remove ffmpeg two-pass log file");
             }
         }
+    }
+}
+
+impl Drop for PasslogCleanup {
+    fn drop(&mut self) {
+        self.run();
     }
 }
 

@@ -150,7 +150,7 @@ fn build_crossover_map(h: &Hull) -> std::collections::HashMap<Resolution, f64> {
 }
 
 fn to_ladder(mut points: Vec<Point>) -> Ladder {
-    points.sort_by(|a, b| a.bitrate.partial_cmp(&b.bitrate).unwrap());
+    points.sort_by(|a, b| a.bitrate.total_cmp(&b.bitrate));
     let rungs =
         points.into_iter().enumerate().map(|(i, p)| Rung { point: p, index: i as i32 }).collect();
     Ladder { rungs }
@@ -162,7 +162,10 @@ impl Ladder {
         if self.rungs.is_empty() {
             return (0.0, 0.0);
         }
-        (self.rungs.first().unwrap().point.bitrate, self.rungs.last().unwrap().point.bitrate)
+        (
+            self.rungs.first().expect("non-empty after check").point.bitrate,
+            self.rungs.last().expect("non-empty after check").point.bitrate,
+        )
     }
 
     /// Returns the (lowest, highest) VMAF quality, or `(0.0, 0.0)` if empty.
@@ -170,7 +173,10 @@ impl Ladder {
         if self.rungs.is_empty() {
             return (0.0, 0.0);
         }
-        (self.rungs.first().unwrap().point.vmaf, self.rungs.last().unwrap().point.vmaf)
+        (
+            self.rungs.first().expect("non-empty after check").point.vmaf,
+            self.rungs.last().expect("non-empty after check").point.vmaf,
+        )
     }
 
     /// Percent bitrate savings of the top rung versus a fixed top-rung bitrate (kbps).
@@ -180,7 +186,7 @@ impl Ladder {
         if self.rungs.is_empty() || fixed_bitrate <= 0.0 {
             return 0.0;
         }
-        let top = &self.rungs.last().unwrap().point;
+        let top = &self.rungs.last().expect("non-empty after check").point;
         if top.bitrate >= fixed_bitrate {
             return 0.0;
         }

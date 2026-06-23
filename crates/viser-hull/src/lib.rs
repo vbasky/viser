@@ -63,9 +63,7 @@ pub fn compute_upper(points: &[Point]) -> Hull {
         return Hull { points: vec![] };
     }
 
-    sorted.sort_by(|a, b| {
-        a.bitrate.partial_cmp(&b.bitrate).unwrap().then(b.vmaf.partial_cmp(&a.vmaf).unwrap())
-    });
+    sorted.sort_by(|a, b| a.bitrate.total_cmp(&b.bitrate).then(b.vmaf.total_cmp(&a.vmaf)));
 
     let mut hull: Vec<Point> = Vec::new();
     for p in sorted {
@@ -399,7 +397,7 @@ mod proptests {
         #[test]
         fn hull_points_are_sorted_by_vmaf(points in proptest::collection::vec(arb_point(), 3..100)) {
             let mut sorted: Vec<Point> = points.into_iter().collect();
-            sorted.sort_by(|a, b| a.bitrate.partial_cmp(&b.bitrate).unwrap());
+            sorted.sort_by(|a, b| a.bitrate.total_cmp(&b.bitrate));
             // Make VMAF monotonic (real encoding data is: higher bitrate = equal or higher VMAF)
             let mut max_vmaf = 0.0;
             for p in sorted.iter_mut() {
@@ -432,7 +430,7 @@ mod proptests {
         #[test]
         fn all_input_points_below_hull(points in proptest::collection::vec(arb_point(), 2..100)) {
             let mut sorted: Vec<Point> = points.into_iter().collect();
-            sorted.sort_by(|a, b| a.bitrate.partial_cmp(&b.bitrate).unwrap());
+            sorted.sort_by(|a, b| a.bitrate.total_cmp(&b.bitrate));
             let mut max_vmaf = 0.0;
             for p in sorted.iter_mut() {
                 if p.vmaf < max_vmaf { p.vmaf = max_vmaf; }
@@ -478,14 +476,16 @@ mod proptests {
         fn first_and_last_points_are_on_hull(points in proptest::collection::vec(arb_point(), 2..100)) {
             let mut sorted = points.clone();
             sorted.sort_by(|a, b| a.bitrate.partial_cmp(&b.bitrate).unwrap());
-            let min_bitrate = sorted.first().unwrap().bitrate;
-            let max_bitrate = sorted.last().unwrap().bitrate;
+            let min_bitrate = sorted.first().map(|p| p.bitrate).unwrap_or(0.0);
+            let max_bitrate = sorted.last().map(|p| p.bitrate).unwrap_or(0.0);
             let hull = compute_upper(&points);
             // The hull must span at least the bitrate range of the input
-            assert!(hull.points.first().unwrap().bitrate <= min_bitrate + 1e-9,
-                "hull start {} > input min {}", hull.points.first().unwrap().bitrate, min_bitrate);
-            assert!(hull.points.last().unwrap().bitrate >= max_bitrate - 1e-9,
-                "hull end {} < input max {}", hull.points.last().unwrap().bitrate, max_bitrate);
+            if let (Some(first), Some(last)) = (hull.points.first(), hull.points.last()) {
+                assert!(first.bitrate <= min_bitrate + 1e-9,
+                    "hull start {} > input min {}", first.bitrate, min_bitrate);
+                assert!(last.bitrate >= max_bitrate - 1e-9,
+                    "hull end {} < input max {}", last.bitrate, max_bitrate);
+            }
         }
     }
 
@@ -493,11 +493,18 @@ mod proptests {
     fn is_point_below_hull(p: &Point, hull_points: &[Point]) -> bool {
         // For an upper hull, "below" means the point's VMAF is <= the hull's VMAF
         // at the same bitrate, using linear interpolation.
+        if hull_points.is_empty() {
+            return false;
+        }
         if p.bitrate <= hull_points[0].bitrate {
             return p.vmaf <= hull_points[0].vmaf + 1e-9;
         }
-        if p.bitrate >= hull_points.last().unwrap().bitrate {
-            return p.vmaf <= hull_points.last().unwrap().vmaf + 1e-9;
+        if let Some(last) = hull_points.last() {
+            if p.bitrate >= last.bitrate {
+                return p.vmaf <= last.vmaf + 1e-9;
+            }
+        } else {
+            return false;
         }
         // Find the two hull points bracketing p's bitrate
         for i in 0..hull_points.len() - 1 {

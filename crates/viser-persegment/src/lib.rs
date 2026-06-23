@@ -33,6 +33,8 @@ pub struct Config {
     pub segment_duration: Duration,
     /// Maximum binary-search iterations per segment.
     pub max_iterations: i32,
+    /// Number of parallel segment encodes (0 = auto, see effective_parallel).
+    pub parallel: i32,
 }
 
 impl Default for Config {
@@ -47,6 +49,7 @@ impl Default for Config {
             preset: "medium".into(),
             segment_duration: Duration::from_secs(1),
             max_iterations: 5,
+            parallel: 0,
         }
     }
 }
@@ -119,11 +122,15 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
     let tmp_dir = tempfile::Builder::new().prefix("viser-persegment-").tempdir()?;
 
     // Step 4: Encode and verify each segment in parallel
-    let parallel = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let parallel = if cfg.parallel > 0 {
+        cfg.parallel as usize
+    } else {
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(1)
+    };
     let semaphore = Arc::new(tokio::sync::Semaphore::new(parallel));
     let source = Arc::new(source.to_string());
 
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
     for (i, seg) in segments.iter().enumerate() {
         let sem = semaphore.clone();
         let source = source.clone();
@@ -138,11 +145,12 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
             tolerance: cfg.tolerance,
             max_iterations: cfg.max_iterations,
             segment_duration: Duration::from_secs(0),
+            parallel: cfg.parallel,
         };
         let tmp_dir_path = tmp_dir.path().to_path_buf();
 
-        handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+        set.spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
 
             let mut crf_low = cfg_shared.min_crf;
             let mut crf_high = cfg_shared.max_crf;
@@ -209,12 +217,12 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
             }
 
             Ok::<_, anyhow::Error>((i, seg))
-        }));
+        });
     }
 
     let mut seg_results: Vec<Option<SegmentResult>> = vec![None; segments.len()];
-    for h in handles {
-        let (i, seg) = h.await??;
+    while let Some(res) = set.join_next().await {
+        let (i, seg) = res??;
         seg_results[i] = Some(seg);
     }
     let segments: Vec<SegmentResult> = seg_results.into_iter().flatten().collect();
