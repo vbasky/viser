@@ -13,7 +13,9 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::{info, warn};
 use viser_checkpoint::Checkpoint;
 use viser_encoding::{Config as EncodingConfig, ProgressSender, preset_for_codec};
-use viser_ffmpeg::{Codec, EncodeJob, ProbeCache, ProbeResult, Resolution, encode, probe};
+use viser_ffmpeg::{
+    Codec, EncodeJob, ProbeCache, ProbeResult, Resolution, SourceFormat, encode, probe,
+};
 use viser_hull::{Crossover, Hull, Point, compute_per_codec, compute_upper};
 use viser_ladder::{self, Ladder, Opts as LadderOpts};
 use viser_quality::{self, MeasureOpts, Metric};
@@ -42,6 +44,9 @@ pub struct Config {
     /// Allow best-effort analysis of HDR sources instead of bailing out.
     #[serde(default)]
     pub allow_hdr: bool,
+    /// How HDR/high bit-depth sources are prepared before quality scoring.
+    #[serde(default)]
+    pub hdr_scoring: viser_quality::HdrScoringMode,
 }
 
 /// Complete output of a per-title analysis.
@@ -186,6 +191,8 @@ pub async fn analyze(
     let probe_cache = ProbeCache::new();
     let sender = Arc::new(ProgressSender::new(progress_tx));
 
+    let source_format = SourceFormat::from_stream(video);
+    let hdr_scoring = cfg.hdr_scoring;
     let points = Arc::new(Mutex::new(Vec::new()));
     let warnings = Arc::new(Mutex::new(Vec::new()));
     if video.is_hdr() {
@@ -213,6 +220,7 @@ pub async fn analyze(
         let points = points.clone();
         let warnings = warnings.clone();
         let done = done.clone();
+        let source_format = source_format.clone();
 
         set.spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
@@ -256,6 +264,7 @@ pub async fn analyze(
                 preset: preset_for_codec(t.codec, &cfg.encoding.preset),
                 hwaccel: None,
                 extra_args: vec![],
+                source_format: Some(source_format.clone()),
             };
 
             let enc_result = match encode(job, None).await {
@@ -298,6 +307,7 @@ pub async fn analyze(
                     subsample: cfg.encoding.subsample,
                     model: cfg.vmaf_model.clone(),
                     probe_cache: Some(probe_cache.clone()),
+                    hdr_scoring,
                     ..Default::default()
                 },
             )

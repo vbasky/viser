@@ -1,4 +1,33 @@
 # Changelog
+## [0.9.0] - 2026-06-24
+
+10-bit pipeline correctness and HDR-aware scoring/encode preservation across
+analysis, delivery, and quality measurement.
+
+### Added
+
+- **`viser-ffmpeg::color`** — `SourceFormat`, `bit_depth()`, `encode_color_args()`,
+  and `psnr_peak()` helpers for bit-depth and HDR metadata handling.
+- **`EncodeJob.source_format`** and **`EncodeJob::with_source_video()`** — trial
+  and delivery encodes preserve `yuv420p10le` / `main10` / `high10` and HDR color
+  tags for software codecs (libx264, libx265, libsvtav1).
+- **`viser-quality::scoring`** — `HdrScoringMode` (`auto`, `tonemap`, `native`)
+  with filter-graph preparation for format parity and HDR tonemap-to-SDR scoring.
+- **`MeasureOpts.hdr_scoring`** — propagated through per-title, per-shot, and
+  per-segment measurement paths.
+- **`--hdr-scoring`** CLI flag on `per-title analyze` and `per-shot analyze`.
+- **FATE tests** (`fate_10bit.rs`) — 10-bit encode preservation and VMAF ordering
+  on 10-bit SDR content.
+
+### Changed
+
+- Quality measurement probes both reference and distorted streams, normalizes
+  pixel formats for 10-bit SDR, and tonemaps HDR sources to BT.709 SDR before
+  VMAF/PSNR/SSIM/XPSNR when `HdrScoringMode` is `auto` or `tonemap`.
+- Per-title, per-segment, and delivery pipelines attach `SourceFormat` from the
+  probed source so ladder trials reflect real bit depth.
+- `viser encode` probes the source and preserves bit depth/HDR metadata automatically.
+
 ## [0.8.1] - 2026-06-23
 
 Robustness, safety, and interrupt-handling fixes for long-running per-title/per-shot/per-segment analyses.

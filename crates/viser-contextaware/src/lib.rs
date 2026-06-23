@@ -104,6 +104,7 @@ pub async fn analyze(
             checkpoint_path: String::new(),
             opt_metric: Default::default(),
             allow_hdr: false,
+            ..Default::default()
         };
 
         let pt_result = viser_pertitle::analyze(source, pt_cfg, None)

@@ -76,6 +76,41 @@ pub(crate) fn generate_test_clip(
     path
 }
 
+/// Generate a 10-bit SDR test clip (HEVC, BT.709, MP4 container).
+pub(crate) fn generate_10bit_sdr_clip(dir: &Path) -> PathBuf {
+    let path = dir.join("sdr10_test.mp4");
+    let status = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=640x360:rate=30",
+            "-c:v",
+            "libx265",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p10le",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-colorspace",
+            "bt709",
+            "-t",
+            "2",
+        ])
+        .arg(&path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("failed to spawn ffmpeg");
+
+    assert!(status.success(), "ffmpeg failed to generate 10-bit SDR clip");
+    path
+}
+
 /// Generate an HDR test clip (HEVC with PQ transfer, MP4 container).
 /// MP4 reliably exposes color metadata to ffprobe, unlike Matroska.
 pub(crate) fn generate_hdr_clip(dir: &Path) -> PathBuf {

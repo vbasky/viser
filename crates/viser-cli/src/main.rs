@@ -250,6 +250,26 @@ enum OptMetricArg {
     Ssim,
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum HdrScoringArg {
+    /// Tonemap HDR to SDR for scoring; preserve 10-bit for high bit-depth SDR.
+    Auto,
+    /// Always tonemap HDR sources to BT.709 SDR before scoring.
+    Tonemap,
+    /// Keep native pixel format (may produce unreliable VMAF for HDR).
+    Native,
+}
+
+impl From<HdrScoringArg> for viser_quality::HdrScoringMode {
+    fn from(mode: HdrScoringArg) -> Self {
+        match mode {
+            HdrScoringArg::Auto => viser_quality::HdrScoringMode::Auto,
+            HdrScoringArg::Tonemap => viser_quality::HdrScoringMode::Tonemap,
+            HdrScoringArg::Native => viser_quality::HdrScoringMode::Native,
+        }
+    }
+}
+
 impl From<OptMetricArg> for viser_quality::Metric {
     fn from(m: OptMetricArg) -> Self {
         match m {
@@ -370,6 +390,9 @@ struct PerTitleAnalyzeArgs {
     /// Allow best-effort analysis on HDR sources
     #[arg(long)]
     allow_hdr: bool,
+    /// How HDR/high bit-depth sources are prepared before quality scoring
+    #[arg(long, value_enum, default_value = "auto")]
+    hdr_scoring: HdrScoringArg,
 }
 
 #[derive(Parser)]
@@ -479,6 +502,9 @@ struct PerShotAnalyzeArgs {
     /// Allow best-effort analysis on HDR sources
     #[arg(long)]
     allow_hdr: bool,
+    /// How HDR/high bit-depth sources are prepared before quality scoring
+    #[arg(long, value_enum, default_value = "auto")]
+    hdr_scoring: HdrScoringArg,
 }
 
 // ── Per-Segment ──
@@ -743,6 +769,11 @@ async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
         None
     };
 
+    let source_info = viser_ffmpeg::probe(&args.input).await?;
+    let source_video = source_info
+        .video_stream()
+        .ok_or_else(|| anyhow::anyhow!("no video stream found in {}", args.input))?;
+
     let job = viser_ffmpeg::EncodeJob {
         input: args.input,
         output: args.output,
@@ -756,7 +787,9 @@ async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
         preset: args.preset,
         hwaccel: args.hwaccel,
         extra_args: vec![],
-    };
+        source_format: None,
+    }
+    .with_source_video(source_video);
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<viser_ffmpeg::Progress>(10);
     tokio::spawn(async move {
@@ -855,6 +888,7 @@ async fn cmd_quality_measure(args: QualityMeasureArgs) -> anyhow::Result<()> {
         per_frame,
         frame_samples: args.frame_samples,
         probe_cache: None,
+        ..Default::default()
     };
 
     let result = viser_quality::measure(&args.reference, &args.distorted, opts).await?;
@@ -1094,6 +1128,7 @@ async fn cmd_metrics_compare(args: MetricsCompareArgs) -> anyhow::Result<()> {
             per_frame: true,
             frame_samples: args.frame_samples,
             probe_cache: None,
+            ..Default::default()
         };
         let result = viser_quality::measure(&args.reference, dist, opts).await?;
         encodes.push((dist.clone(), result));
@@ -1344,6 +1379,7 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
         vmaf_model: String::new(),
         opt_metric: args.metric.into(),
         allow_hdr: args.allow_hdr,
+        hdr_scoring: args.hdr_scoring.into(),
     };
 
     let total = resolutions.len() * codecs.len() * args.crf_values.len();
@@ -1458,6 +1494,12 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
     });
     let parallel = effective_parallel(args.parallel);
     let source_duration = result.source_info.format.duration;
+    let source_format = if let Some(video) = result.source_info.video_stream() {
+        Some(viser_ffmpeg::SourceFormat::from_stream(video))
+    } else {
+        let info = viser_ffmpeg::probe(&source).await?;
+        info.video_stream().map(viser_ffmpeg::SourceFormat::from_stream)
+    };
 
     println!("Viser Per-Title Delivery");
     println!("  Analysis: {}", args.analysis);
@@ -1530,6 +1572,7 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
 
     let source = Arc::new(source);
     let preset = Arc::new(preset);
+    let source_format = Arc::new(source_format);
     let chunk_seconds = args.chunk_seconds;
     let bufsize_factor = args.bufsize_factor;
     let semaphore = Arc::new(tokio::sync::Semaphore::new(parallel));
@@ -1538,17 +1581,21 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
     for job in jobs.iter().cloned() {
         let source = source.clone();
         let preset = preset.clone();
+        let source_format = source_format.clone();
         let semaphore = semaphore.clone();
         join_set.spawn(async move {
             let _permit = semaphore.acquire_owned().await?;
             let encode_result = run_delivery_job(
                 &job,
                 source.as_ref().as_str(),
-                preset.as_str(),
-                delivery_mode,
-                bufsize_factor,
-                chunk_seconds,
-                source_duration,
+                &DeliveryOpts {
+                    preset: preset.as_ref().clone(),
+                    mode: delivery_mode,
+                    bufsize_factor,
+                    chunk_seconds,
+                    source_duration,
+                    source_format: source_format.as_ref().clone(),
+                },
             )
             .await?;
             Ok::<DeliveryArtifact, anyhow::Error>(DeliveryArtifact {
@@ -1639,6 +1686,7 @@ async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs) -> anyhow::Result<()> {
         vmaf_model: args.vmaf_model,
         opt_metric: args.metric.into(),
         allow_hdr: args.allow_hdr,
+        hdr_scoring: args.hdr_scoring.into(),
     };
 
     let metric_label = args.metric.label();
@@ -1834,6 +1882,16 @@ struct DeliveryArtifact {
     duration_secs: f64,
 }
 
+#[derive(Debug, Clone)]
+struct DeliveryOpts {
+    preset: String,
+    mode: viser_ffmpeg::RateControlMode,
+    bufsize_factor: f64,
+    chunk_seconds: Option<f64>,
+    source_duration: f64,
+    source_format: Option<viser_ffmpeg::SourceFormat>,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 struct DeliveryManifest {
     analysis: String,
@@ -1850,41 +1908,24 @@ struct DeliveryManifest {
 async fn run_delivery_job(
     job: &DeliveryPlan,
     source: &str,
-    preset: &str,
-    mode: viser_ffmpeg::RateControlMode,
-    bufsize_factor: f64,
-    chunk_seconds: Option<f64>,
-    source_duration: f64,
+    opts: &DeliveryOpts,
 ) -> anyhow::Result<viser_ffmpeg::EncodeResult> {
-    if let Some(chunk_seconds) = chunk_seconds {
-        return run_chunked_delivery_job(
-            job,
-            source,
-            preset,
-            mode,
-            bufsize_factor,
-            chunk_seconds,
-            source_duration,
-        )
-        .await;
+    if let Some(chunk_seconds) = opts.chunk_seconds {
+        return run_chunked_delivery_job(job, source, opts, chunk_seconds).await;
     }
 
-    let encode_job =
-        build_delivery_encode_job(job, source, &job.output, preset, mode, bufsize_factor, vec![]);
+    let encode_job = build_delivery_encode_job(job, source, &job.output, vec![], opts);
     viser_ffmpeg::encode(encode_job, None).await
 }
 
 async fn run_chunked_delivery_job(
     job: &DeliveryPlan,
     source: &str,
-    preset: &str,
-    mode: viser_ffmpeg::RateControlMode,
-    bufsize_factor: f64,
+    opts: &DeliveryOpts,
     chunk_seconds: f64,
-    source_duration: f64,
 ) -> anyhow::Result<viser_ffmpeg::EncodeResult> {
     let tmp_dir = tempfile::Builder::new().prefix("viser-delivery-").tempdir()?;
-    let chunks = build_chunks(source_duration, chunk_seconds);
+    let chunks = build_chunks(opts.source_duration, chunk_seconds);
     let mut outputs = Vec::with_capacity(chunks.len());
     let started = std::time::Instant::now();
 
@@ -1900,10 +1941,8 @@ async fn run_chunked_delivery_job(
             job,
             source,
             &chunk_output.to_string_lossy(),
-            preset,
-            mode,
-            bufsize_factor,
             extra_args,
+            opts,
         );
         viser_ffmpeg::encode(encode_job, None).await?;
         outputs.push(chunk_output.to_string_lossy().into_owned());
@@ -1913,15 +1952,7 @@ async fn run_chunked_delivery_job(
 
     let meta = std::fs::metadata(&job.output)?;
     Ok(viser_ffmpeg::EncodeResult {
-        job: build_delivery_encode_job(
-            job,
-            source,
-            &job.output,
-            preset,
-            mode,
-            bufsize_factor,
-            vec![],
-        ),
+        job: build_delivery_encode_job(job, source, &job.output, vec![], opts),
         bitrate: probe_average_bitrate(&job.output).await?,
         file_size: meta.len(),
         duration: started.elapsed(),
@@ -1932,17 +1963,16 @@ fn build_delivery_encode_job(
     job: &DeliveryPlan,
     source: &str,
     output: &str,
-    preset: &str,
-    mode: viser_ffmpeg::RateControlMode,
-    bufsize_factor: f64,
     extra_args: Vec<String>,
+    opts: &DeliveryOpts,
 ) -> viser_ffmpeg::EncodeJob {
+    let mode = opts.mode;
     let max_bitrate = if matches!(mode, viser_ffmpeg::RateControlMode::CappedCrf) {
         job.rung.point.bitrate
     } else {
         0.0
     };
-    let bufsize = if max_bitrate > 0.0 { max_bitrate * bufsize_factor } else { 0.0 };
+    let bufsize = if max_bitrate > 0.0 { max_bitrate * opts.bufsize_factor } else { 0.0 };
 
     viser_ffmpeg::EncodeJob {
         input: source.to_string(),
@@ -1958,9 +1988,10 @@ fn build_delivery_encode_job(
         },
         max_bitrate,
         bufsize,
-        preset: viser_encoding::preset_for_codec(job.rung.point.codec, preset),
+        preset: viser_encoding::preset_for_codec(job.rung.point.codec, &opts.preset),
         hwaccel: None,
         extra_args,
+        source_format: opts.source_format.clone(),
     }
 }
 

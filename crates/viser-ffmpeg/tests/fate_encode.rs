@@ -27,6 +27,7 @@ async fn fate_encode_x264_crf_produces_output() {
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec![],
+        source_format: None,
     };
 
     let result = encode(job, None).await.unwrap();
@@ -63,6 +64,7 @@ async fn fate_encode_x265_crf() {
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec![],
+        source_format: None,
     };
 
     let result = encode(job, None).await.unwrap();
@@ -97,6 +99,7 @@ async fn fate_encode_with_resolution_scaling() {
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec![],
+        source_format: None,
     };
 
     encode(job, None).await.unwrap();
@@ -131,6 +134,7 @@ async fn fate_encode_crf_higher_produces_smaller_file() {
             preset: "ultrafast".into(),
             hwaccel: None,
             extra_args: vec![],
+            source_format: None,
         };
         let result = encode(job, None).await.unwrap();
         sizes.push((*crf, result.file_size));
@@ -176,6 +180,7 @@ async fn fate_encode_progress_reporting() {
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec![],
+        source_format: None,
     };
 
     let handle = tokio::spawn(async move { encode(job, Some(tx)).await.unwrap() });
@@ -299,6 +304,7 @@ async fn fate_encode_error_on_nonexistent_input() {
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec![],
+        source_format: None,
     };
 
     let result = encode(job, None).await;
@@ -328,6 +334,7 @@ async fn fate_encode_crf_zero_produces_large_file() {
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec![],
+        source_format: None,
     };
 
     let result = encode(job, None).await.unwrap();
@@ -357,6 +364,7 @@ async fn fate_encode_x264_qp() {
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec![],
+        source_format: None,
     };
 
     let result = encode(job, None).await.unwrap();
@@ -387,6 +395,7 @@ async fn fate_encode_capped_crf() {
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec![],
+        source_format: None,
     };
 
     let result = encode(job, None).await.unwrap();
@@ -421,6 +430,7 @@ async fn fate_encode_preserves_no_audio() {
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec![],
+        source_format: None,
     };
 
     encode(job, None).await.unwrap();
@@ -451,6 +461,7 @@ async fn fate_encode_with_extra_args() {
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec!["-g".into(), "30".into()],
+        source_format: None,
     };
 
     let result = encode(job, None).await.unwrap();
@@ -481,6 +492,7 @@ async fn fate_encode_reference_then_distorted_quality_check() {
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec![],
+        source_format: None,
     };
 
     let result = encode(job, None).await.unwrap();

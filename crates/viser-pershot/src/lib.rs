@@ -35,6 +35,8 @@ pub struct Config {
     pub opt_metric: viser_quality::Metric,
     /// Allow best-effort analysis of HDR sources instead of bailing out.
     pub allow_hdr: bool,
+    /// How HDR/high bit-depth sources are prepared before quality scoring.
+    pub hdr_scoring: viser_quality::HdrScoringMode,
 }
 
 impl Default for Config {
@@ -48,6 +50,7 @@ impl Default for Config {
             vmaf_model: String::new(),
             opt_metric: viser_quality::Metric::default(),
             allow_hdr: false,
+            hdr_scoring: viser_quality::HdrScoringMode::Auto,
         }
     }
 }
@@ -152,6 +155,7 @@ pub async fn analyze(
             vmaf_model: cfg.vmaf_model.clone(),
             opt_metric: cfg.opt_metric,
             allow_hdr: cfg.allow_hdr,
+            hdr_scoring: cfg.hdr_scoring,
         };
         let sender = sender.clone();
         let shots_len = shots.len();

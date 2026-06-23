@@ -14,8 +14,10 @@ use viser_ffmpeg::{ProbeCache, ffmpeg_path};
 
 pub mod noref;
 pub mod pool;
+pub mod scoring;
 pub use noref::{NoRefOpts, NoRefResult, measure_noref};
 pub use pool::{PoolStrategy, PooledStats};
+pub use scoring::{HdrScoringMode, build_compare_filtergraph, build_vmaf_filtergraph};
 
 /// Quality metric type.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +158,8 @@ pub struct MeasureOpts {
     pub frame_samples: usize,
     /// Optional probe cache reused across measurements to avoid redundant probes.
     pub probe_cache: Option<ProbeCache>,
+    /// How HDR and high bit-depth sources are prepared before scoring.
+    pub hdr_scoring: HdrScoringMode,
 }
 
 impl Default for MeasureOpts {
@@ -173,8 +177,34 @@ impl Default for MeasureOpts {
             per_frame: false,
             frame_samples: 0,
             probe_cache: None,
+            hdr_scoring: HdrScoringMode::Auto,
         }
     }
+}
+
+async fn probe_reference_and_distorted(
+    reference: &str,
+    distorted: &str,
+    cache: &Option<ProbeCache>,
+) -> anyhow::Result<(viser_ffmpeg::StreamInfo, viser_ffmpeg::StreamInfo)> {
+    let ref_info = probe_cached(reference, cache).await?;
+    let dist_info = probe_cached(distorted, cache).await?;
+    let ref_video = ref_info
+        .video_stream()
+        .ok_or_else(|| anyhow::anyhow!("no video stream in reference"))?
+        .clone();
+    let dist_video = dist_info
+        .video_stream()
+        .ok_or_else(|| anyhow::anyhow!("no video stream in distorted"))?
+        .clone();
+    Ok((ref_video, dist_video))
+}
+
+async fn probe_cached(
+    path: &str,
+    cache: &Option<ProbeCache>,
+) -> anyhow::Result<viser_ffmpeg::ProbeResult> {
+    if let Some(cache) = cache { cache.probe(path).await } else { viser_ffmpeg::probe(path).await }
 }
 
 /// Computes quality metrics between a reference and distorted video.
@@ -228,27 +258,31 @@ pub async fn measure(
         vmaf_opts.push_str(&format!(":n_subsample={}", opts.subsample));
     }
 
-    // Probe reference to get resolution for scaling
-    let ref_info = if let Some(ref cache) = opts.probe_cache {
-        cache.probe(reference).await?
-    } else {
-        viser_ffmpeg::probe(reference).await?
-    };
+    let (ref_video, dist_video) =
+        probe_reference_and_distorted(reference, distorted, &opts.probe_cache).await?;
 
-    let ref_video =
-        ref_info.video_stream().ok_or_else(|| anyhow::anyhow!("no video stream in reference"))?;
-
-    if ref_video.bits_per_raw_sample > 8 {
+    if ref_video.bits_per_raw_sample > 8 && !ref_video.is_hdr() {
         warn!(
             bits_per_sample = ref_video.bits_per_raw_sample,
             reference = reference,
-            "10-bit content detected; VMAF scores calibrated for 8-bit may differ"
+            "10-bit SDR content: scoring preserves bit depth; VMAF model calibration may still differ from 8-bit"
+        );
+    }
+    if ref_video.is_hdr() && opts.hdr_scoring != HdrScoringMode::Native {
+        warn!(
+            hdr = ref_video.hdr_kind().unwrap_or("HDR"),
+            reference = reference,
+            "HDR source will be tonemapped to BT.709 SDR for scoring"
         );
     }
 
-    let filtergraph = format!(
-        "[0:v]scale={}:{}:flags=bicubic[dist];[dist][1:v]libvmaf={}",
-        ref_video.width, ref_video.height, vmaf_opts
+    let filtergraph = build_vmaf_filtergraph(
+        &ref_video,
+        &dist_video,
+        opts.hdr_scoring,
+        ref_video.width,
+        ref_video.height,
+        &vmaf_opts,
     );
 
     let args = ["-i", distorted, "-i", reference, "-lavfi", &filtergraph, "-f", "null", "-"];
@@ -309,13 +343,15 @@ async fn measure_native(
     metrics: &[Metric],
     opts: &MeasureOpts,
 ) -> anyhow::Result<Result> {
-    let ref_info = if let Some(ref cache) = opts.probe_cache {
-        cache.probe(reference).await?
-    } else {
-        viser_ffmpeg::probe(reference).await?
-    };
-    let ref_video =
-        ref_info.video_stream().ok_or_else(|| anyhow::anyhow!("no video stream in reference"))?;
+    let (ref_video, dist_video) =
+        probe_reference_and_distorted(reference, distorted, &opts.probe_cache).await?;
+    let (compare_graph, _plan) = build_compare_filtergraph(
+        &ref_video,
+        &dist_video,
+        opts.hdr_scoring,
+        ref_video.width,
+        ref_video.height,
+    );
 
     // When subsampling, decimate both inputs identically so the compared frames
     // stay aligned; otherwise pass both through unchanged.
@@ -333,10 +369,8 @@ async fn measure_native(
             _ => continue,
         };
 
-        let filtergraph = format!(
-            "[0:v]scale={}:{}:flags=bicubic,{sel}[dist];[1:v]{sel}[ref];[dist][ref]{filter_name}",
-            ref_video.width, ref_video.height
-        );
+        let filtergraph =
+            format!("{compare_graph};[dist]{sel}[dsel];[ref]{sel}[rsel];[dsel][rsel]{filter_name}");
         let args = ["-i", distorted, "-i", reference, "-lavfi", &filtergraph, "-f", "null", "-"];
 
         let output = Command::new(ffmpeg_path())
@@ -753,14 +787,19 @@ async fn measure_xpsnr(
     distorted: &str,
     opts: &MeasureOpts,
 ) -> anyhow::Result<Vec<f64>> {
-    let (width, height, _nb) = reference_dims(reference, opts).await?;
+    let (ref_video, dist_video) =
+        probe_reference_and_distorted(reference, distorted, &opts.probe_cache).await?;
+    let (compare_graph, _plan) = build_compare_filtergraph(
+        &ref_video,
+        &dist_video,
+        opts.hdr_scoring,
+        ref_video.width,
+        ref_video.height,
+    );
     let stats = tempfile::Builder::new().prefix("viser-xpsnr-").suffix(".log").tempfile()?;
     let stats_path = stats.path().to_string_lossy().to_string();
 
-    // Match the libvmaf path: scale the distorted input to reference dimensions.
-    let filtergraph = format!(
-        "[0:v]scale={width}:{height}:flags=bicubic[dist];[dist][1:v]xpsnr=stats_file={stats_path}"
-    );
+    let filtergraph = format!("{compare_graph};[dist][ref]xpsnr=stats_file={stats_path}");
     let output = Command::new(ffmpeg_path())
         .args(["-i", distorted, "-i", reference, "-lavfi", &filtergraph, "-f", "null", "-"])
         .stderr(std::process::Stdio::piped())

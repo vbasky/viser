@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use viser_complexity::{self, AnalyzeOpts, Profile};
-use viser_ffmpeg::{self, Codec, EncodeJob, Resolution};
+use viser_ffmpeg::{self, Codec, EncodeJob, Resolution, SourceFormat, probe};
 use viser_quality::{self, MeasureOpts, Metric};
 
 /// Config for segment-level CRF adaptation.
@@ -118,6 +118,12 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
         })
         .collect();
 
+    let source_info = probe(source).await?;
+    let source_video = source_info
+        .video_stream()
+        .ok_or_else(|| anyhow::anyhow!("no video stream found in {source}"))?;
+    let source_format = SourceFormat::from_stream(source_video);
+
     // Step 3: Temp directory
     let tmp_dir = tempfile::Builder::new().prefix("viser-persegment-").tempdir()?;
 
@@ -148,6 +154,7 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
             parallel: cfg.parallel,
         };
         let tmp_dir_path = tmp_dir.path().to_path_buf();
+        let source_format = source_format.clone();
 
         set.spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
@@ -184,6 +191,7 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
                     bufsize: 0.0,
                     hwaccel: None,
                     extra_args: vec![],
+                    source_format: Some(source_format.clone()),
                 };
 
                 let enc_result = viser_ffmpeg::encode(job, None).await?;

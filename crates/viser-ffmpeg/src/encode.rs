@@ -3,7 +3,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 
-use crate::{Codec, EncoderBackend, RateControlMode, Resolution, ffmpeg_path, probe};
+use crate::{
+    Codec, EncoderBackend, RateControlMode, Resolution, SourceFormat, StreamInfo,
+    encode_color_args, ffmpeg_path, probe,
+};
 
 /// Parameters for a single encode.
 #[derive(Debug, Clone)]
@@ -34,6 +37,16 @@ pub struct EncodeJob {
     pub hwaccel: Option<String>,
     /// Extra raw FFmpeg arguments appended verbatim before the output path.
     pub extra_args: Vec<String>,
+    /// Source color/bit-depth characteristics to preserve in the output encode.
+    pub source_format: Option<SourceFormat>,
+}
+
+impl EncodeJob {
+    /// Attaches probed source video characteristics for bit-depth/HDR preservation.
+    pub fn with_source_video(mut self, video: &StreamInfo) -> Self {
+        self.source_format = Some(SourceFormat::from_stream(video));
+        self
+    }
 }
 
 /// Output of a completed encode.
@@ -269,6 +282,10 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
         } else {
             args.extend(["-preset".into(), job.preset.clone()]);
         }
+    }
+
+    if let Some(format) = &job.source_format {
+        args.extend(encode_color_args(job.codec, format));
     }
 
     if let Some(vf) = build_filter_chain(job) {
@@ -634,6 +651,7 @@ mod tests {
             preset: "medium".into(),
             hwaccel: None,
             extra_args: vec![],
+            source_format: None,
         }
     }
 
@@ -651,6 +669,23 @@ mod tests {
     }
 
     // ── Software CRF ──
+    #[test]
+    fn test_build_encode_args_preserves_10bit_source() {
+        let mut job = sample_job(RateControlMode::Crf);
+        job.codec = Codec::X265;
+        job.source_format = Some(SourceFormat {
+            pix_fmt: "yuv420p10le".into(),
+            bit_depth: 10,
+            color_primaries: "bt709".into(),
+            color_transfer: "bt709".into(),
+            color_space: "bt709".into(),
+            is_hdr: false,
+        });
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-pix_fmt", "yuv420p10le"));
+        assert!(args.iter().any(|a| a.contains("profile=main10")));
+    }
+
     #[test]
     fn test_build_encode_args_crf_single_pass() {
         let args =
@@ -1625,6 +1660,7 @@ mod tests {
                         preset,
                         hwaccel: None,
                         extra_args: vec![],
+                        source_format: None,
                     }
                 })
         }

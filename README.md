@@ -408,12 +408,11 @@ viser is designed for content-adaptive VOD encoding and explicitly does not addr
 
 ## Status
 
-`0.6.x` — hardware encode/decode matrix (NVENC, QuickSync, VideoToolbox, VAAPI,
-AMF across H.264/H.265/AV1, plus `-hwaccel` decode) and battle-tested algorithms
-ported from a production Go implementation. Per-title analysis, per-shot Trellis
-optimization, and quality measurement are covered by integration tests. The API
-may evolve before `1.0`. See the [status & roadmap](STATUS.md) for what's covered
-today and what's planned.
+`0.9.x` — content-adaptive VOD encoding with per-title/per-shot/per-segment
+optimization, hardware encode/decode (NVENC, QuickSync, VideoToolbox, VAAPI, AMF),
+10-bit encode preservation, and HDR tonemap scoring (`--hdr-scoring`). The API may
+evolve before `1.0`. See the [status & roadmap](STATUS.md) for what's covered today
+and what's planned.
 
 ## License
 

@@ -19,6 +19,7 @@ async fn encode_at_crf(input: &str, output_dir: &std::path::Path, crf: i32) -> s
         preset: "ultrafast".into(),
         hwaccel: None,
         extra_args: vec![],
+        source_format: None,
     };
     encode(job, None).await.unwrap();
     output
@@ -41,6 +42,7 @@ async fn fate_quality_vmaf_lossless_should_be_high() {
         per_frame: false,
         frame_samples: 0,
         probe_cache: None,
+        ..Default::default()
     };
 
     let result =
@@ -72,6 +74,7 @@ async fn fate_quality_vmaf_lower_crf_higher_score() {
         per_frame: false,
         frame_samples: 0,
         probe_cache: None,
+        ..Default::default()
     };
 
     let vmaf_high = viser_quality::measure(
@@ -115,6 +118,7 @@ async fn fate_quality_psnr_is_computed() {
         per_frame: false,
         frame_samples: 0,
         probe_cache: None,
+        ..Default::default()
     };
 
     let result =
@@ -143,6 +147,7 @@ async fn fate_quality_ssim_is_computed() {
         per_frame: false,
         frame_samples: 0,
         probe_cache: None,
+        ..Default::default()
     };
 
     let result =
@@ -171,6 +176,7 @@ async fn fate_quality_per_frame_data() {
         per_frame: true,
         frame_samples: 0,
         probe_cache: None,
+        ..Default::default()
     };
 
     let result =
@@ -228,6 +234,7 @@ async fn fate_quality_probe_cache_reuse() {
         per_frame: false,
         frame_samples: 0,
         probe_cache: Some(cache.clone()),
+        ..Default::default()
     };
 
     let result1 = viser_quality::measure(
@@ -283,6 +290,7 @@ async fn fate_quality_error_for_missing_reference() {
         per_frame: false,
         frame_samples: 0,
         probe_cache: None,
+        ..Default::default()
     };
 
     let result =

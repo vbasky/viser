@@ -5,6 +5,7 @@
 //! `ffmpeg`/`ffprobe` binary paths. A `ProbeCache` deduplicates probe calls.
 
 mod cache;
+mod color;
 mod encode;
 mod hw_encode;
 mod path;
@@ -15,6 +16,7 @@ mod probe_revelo;
 pub use probe_revelo::probe as probe_revelo;
 
 pub use cache::*;
+pub use color::*;
 pub use encode::*;
 pub use hw_encode::*;
 pub use path::*;
