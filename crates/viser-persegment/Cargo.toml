@@ -1,6 +1,6 @@
 [package]
 name = "viser-persegment"
-version = "0.8.1"
+version = "0.9.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,9 +17,9 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.8.1" }
-viser-complexity = { path = "../viser-complexity", version = "0.8.1" }
-viser-quality = { path = "../viser-quality", version = "0.8.1" }
+viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.9.0" }
+viser-complexity = { path = "../viser-complexity", version = "0.9.0" }
+viser-quality = { path = "../viser-quality", version = "0.9.0" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync"] }
