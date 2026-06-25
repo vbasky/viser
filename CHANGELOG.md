@@ -1,4 +1,33 @@
 # Changelog
+
+## [0.10.0] - 2026-06-25
+
+HDR10 static-metadata preservation: PQ/HLG encodes now carry mastering-display
+colour volume (SMPTE ST 2086) and content light level (MaxCLL/MaxFALL) through
+to the output on both x265 and SVT-AV1, not just the transfer/primaries tags.
+
+### Added
+
+- **`viser-ffmpeg::hdr`** — `Hdr10Metadata`, `MasteringDisplay`, and
+  `probe_hdr10_metadata()`. Reads the first video frame's `side_data_list` via
+  ffprobe and normalises chromaticity/luminance into the integer units x265's
+  `master-display` / `max-cll` parameters consume.
+- **`SourceFormat.hdr10`** and **`SourceFormat::enrich_hdr10()`** — attaches
+  probed HDR10 static metadata to HDR sources (no-op for SDR). Wired into the
+  per-title, per-segment, and delivery pipelines.
+- **x265 HDR10 signalling** — `encode_color_args()` emits `master-display=…` and
+  `max-cll=…` (`MasteringDisplay::to_x265_string`) for HDR sources carrying
+  static metadata.
+- **SVT-AV1 HDR10 signalling** — emits `mastering-display=…` / `content-light=…`
+  via `-svtav1-params`, using SVT-AV1's real-valued chromaticity/luminance
+  grammar (`MasteringDisplay::to_svtav1_string`) rather than x265's scaled
+  integers. Repeated `-svtav1-params` (rate-control + HDR) are coalesced into a
+  single flag so neither set is dropped.
+- **FATE tests** — HDR10 metadata extraction and encode round-trip on both x265
+  and SVT-AV1 (`fate_probe_extracts_hdr10_metadata`,
+  `fate_encode_preserves_hdr10_metadata`,
+  `fate_svtav1_encode_preserves_hdr10_metadata`).
+
 ## [0.9.0] - 2026-06-24
 
 10-bit pipeline correctness and HDR-aware scoring/encode preservation across

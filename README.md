@@ -411,7 +411,7 @@ viser is designed for content-adaptive VOD encoding and explicitly does not addr
 `0.9.x` — content-adaptive VOD encoding with per-title/per-shot/per-segment
 optimization, hardware encode/decode (NVENC, QuickSync, VideoToolbox, VAAPI, AMF),
 10-bit encode preservation, and HDR tonemap scoring (`--hdr-scoring`). The API may
-evolve before `1.0`. See the [status & roadmap](STATUS.md) for what's covered today
+evolve before `1.0`. See the [roadmap](ROADMAP.md) for what's covered today
 and what's planned.
 
 ## License

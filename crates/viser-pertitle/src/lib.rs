@@ -191,7 +191,7 @@ pub async fn analyze(
     let probe_cache = ProbeCache::new();
     let sender = Arc::new(ProgressSender::new(progress_tx));
 
-    let source_format = SourceFormat::from_stream(video);
+    let source_format = SourceFormat::from_stream(video).enrich_hdr10(source).await;
     let hdr_scoring = cfg.hdr_scoring;
     let points = Arc::new(Mutex::new(Vec::new()));
     let warnings = Arc::new(Mutex::new(Vec::new()));

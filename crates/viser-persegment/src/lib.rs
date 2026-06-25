@@ -122,7 +122,7 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
     let source_video = source_info
         .video_stream()
         .ok_or_else(|| anyhow::anyhow!("no video stream found in {source}"))?;
-    let source_format = SourceFormat::from_stream(source_video);
+    let source_format = SourceFormat::from_stream(source_video).enrich_hdr10(source).await;
 
     // Step 3: Temp directory
     let tmp_dir = tempfile::Builder::new().prefix("viser-persegment-").tempdir()?;

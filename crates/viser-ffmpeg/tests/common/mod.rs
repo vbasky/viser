@@ -21,6 +21,20 @@ pub(crate) fn has_ffmpeg() -> bool {
     true
 }
 
+/// Returns `true` if the installed ffmpeg lists the named encoder
+/// (e.g. `libsvtav1`).
+pub(crate) fn has_encoder(name: &str) -> bool {
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-encoders"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output();
+    match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).contains(name),
+        _ => false,
+    }
+}
+
 /// Returns `true` if the installed ffmpeg supports the `libvmaf` filter.
 /// Checks by parsing `ffmpeg -filters` output for `libvmaf`.
 pub(crate) fn has_libvmaf() -> bool {
@@ -146,6 +160,48 @@ pub(crate) fn generate_hdr_clip(dir: &Path) -> PathBuf {
         .expect("failed to spawn ffmpeg");
 
     assert!(status.success(), "ffmpeg failed to generate HDR clip");
+    path
+}
+
+/// Generate an HDR10 clip carrying mastering-display and content-light static
+/// metadata (HEVC, PQ, BT.2020, MP4). Mirrors `generate_hdr_clip` but adds the
+/// SMPTE ST 2086 / CTA-861.3 side data needed to exercise HDR10 round-tripping.
+pub(crate) fn generate_hdr10_clip(dir: &Path) -> PathBuf {
+    let path = dir.join("hdr10_test.mp4");
+    let x265_params = "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:\
+         master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):\
+         max-cll=1000,400";
+    let status = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "smptehdbars=size=1920x1080:rate=30",
+            "-c:v",
+            "libx265",
+            "-preset",
+            "ultrafast",
+            "-x265-params",
+            x265_params,
+            "-pix_fmt",
+            "yuv420p10le",
+            "-colorspace",
+            "bt2020nc",
+            "-color_primaries",
+            "bt2020",
+            "-color_trc",
+            "smpte2084",
+            "-t",
+            "2",
+        ])
+        .arg(&path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("failed to spawn ffmpeg");
+
+    assert!(status.success(), "ffmpeg failed to generate HDR10 clip");
     path
 }
 

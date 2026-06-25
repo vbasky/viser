@@ -1,6 +1,6 @@
 //! Bit depth, pixel format, and HDR color metadata helpers.
 
-use crate::{Codec, StreamInfo};
+use crate::{Codec, Hdr10Metadata, StreamInfo};
 
 /// Snapshot of source video color characteristics for encode preservation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -17,6 +17,8 @@ pub struct SourceFormat {
     pub color_space: String,
     /// Whether the stream carries HDR signaling.
     pub is_hdr: bool,
+    /// HDR10 static metadata (mastering display + MaxCLL/MaxFALL), when probed.
+    pub hdr10: Option<Hdr10Metadata>,
 }
 
 impl SourceFormat {
@@ -35,12 +37,28 @@ impl SourceFormat {
             color_transfer: stream.color_transfer.clone(),
             color_space: stream.color_space.clone(),
             is_hdr: stream.is_hdr(),
+            hdr10: None,
         }
     }
 
     /// Returns `true` when the source should be encoded at more than 8 bits per sample.
     pub fn is_high_bit_depth(&self) -> bool {
         self.bit_depth > 8
+    }
+
+    /// Probes and attaches HDR10 static metadata (mastering display + MaxCLL)
+    /// when the source is HDR, so it can be re-signalled on the encode.
+    ///
+    /// A no-op for SDR sources. Probe failures are swallowed (best-effort): a
+    /// missing mastering-display block degrades to colour-primary signalling
+    /// rather than failing the encode.
+    pub async fn enrich_hdr10(mut self, path: &str) -> Self {
+        if self.is_hdr {
+            if let Ok(Some(md)) = crate::probe_hdr10_metadata(path).await {
+                self.hdr10 = Some(md);
+            }
+        }
+        self
     }
 }
 
@@ -111,8 +129,18 @@ pub fn encode_color_args(codec: Codec, format: &SourceFormat) -> Vec<String> {
 
     if format.is_hdr {
         append_color_metadata(&mut args, format);
-        if codec == Codec::X265 {
-            merge_x265_color_params(&mut args, format);
+        match codec {
+            Codec::X265 => merge_x265_color_params(&mut args, format),
+            Codec::SvtAv1 => {
+                let params = svtav1_hdr_params(format);
+                if !params.is_empty() {
+                    // A second `-svtav1-params` may be added by the rate-control
+                    // builder; `coalesce_svtav1_params` merges them before the
+                    // encode runs (the last flag would otherwise win outright).
+                    args.extend(["-svtav1-params".into(), params]);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -145,6 +173,33 @@ fn x265_params(format: &SourceFormat) -> String {
         }
         if !format.color_space.is_empty() {
             parts.push(format!("colormatrix={}", format.color_space));
+        }
+        if let Some(hdr10) = &format.hdr10 {
+            if let Some(display) = &hdr10.mastering_display {
+                parts.push(format!("master-display={}", display.to_x265_string()));
+            }
+            if let Some(max_cll) = hdr10.max_cll {
+                // x265 expects "MaxCLL,MaxFALL"; MaxFALL defaults to 0 when absent.
+                parts.push(format!("max-cll={},{}", max_cll, hdr10.max_fall.unwrap_or(0)));
+            }
+        }
+    }
+    parts.join(":")
+}
+
+/// SVT-AV1 `-svtav1-params` HDR10 static-metadata fragment (without the flag).
+///
+/// SVT-AV1 shares x265's `mastering-display` grammar but spells content light
+/// `content-light=MaxCLL,MaxFALL`. Colour primaries/transfer/matrix are carried
+/// by the standard `-color_*` options [`append_color_metadata`] emits.
+fn svtav1_hdr_params(format: &SourceFormat) -> String {
+    let mut parts = Vec::new();
+    if let Some(hdr10) = &format.hdr10 {
+        if let Some(display) = &hdr10.mastering_display {
+            parts.push(format!("mastering-display={}", display.to_svtav1_string()));
+        }
+        if let Some(max_cll) = hdr10.max_cll {
+            parts.push(format!("content-light={},{}", max_cll, hdr10.max_fall.unwrap_or(0)));
         }
     }
     parts.join(":")
@@ -232,5 +287,93 @@ mod tests {
     fn test_psnr_peak_scaling() {
         assert_eq!(psnr_peak(8), 255.0);
         assert_eq!(psnr_peak(10), 1023.0);
+    }
+
+    #[test]
+    fn test_encode_color_args_emits_hdr10_metadata() {
+        use crate::{Hdr10Metadata, MasteringDisplay};
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.color_transfer = "smpte2084".into();
+        stream.color_primaries = "bt2020".into();
+        stream.color_space = "bt2020nc".into();
+        let mut format = SourceFormat::from_stream(&stream);
+        format.hdr10 = Some(Hdr10Metadata {
+            mastering_display: Some(MasteringDisplay {
+                green_x: 13250,
+                green_y: 34500,
+                blue_x: 7500,
+                blue_y: 3000,
+                red_x: 34000,
+                red_y: 16000,
+                white_x: 15635,
+                white_y: 16450,
+                max_luminance: 10_000_000,
+                min_luminance: 50,
+            }),
+            max_cll: Some(1000),
+            max_fall: Some(400),
+        });
+        let args = encode_color_args(Codec::X265, &format);
+        let params = args
+            .windows(2)
+            .find(|w| w[0] == "-x265-params")
+            .map(|w| w[1].clone())
+            .expect("x265-params present");
+        assert!(
+            params.contains("master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,50)"),
+            "got: {params}"
+        );
+        assert!(params.contains("max-cll=1000,400"), "got: {params}");
+    }
+
+    #[test]
+    fn test_encode_color_args_svtav1_hdr10_metadata() {
+        use crate::{Hdr10Metadata, MasteringDisplay};
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.color_transfer = "smpte2084".into();
+        stream.color_primaries = "bt2020".into();
+        stream.color_space = "bt2020nc".into();
+        let mut format = SourceFormat::from_stream(&stream);
+        format.hdr10 = Some(Hdr10Metadata {
+            mastering_display: Some(MasteringDisplay {
+                green_x: 13250,
+                green_y: 34500,
+                blue_x: 7500,
+                blue_y: 3000,
+                red_x: 34000,
+                red_y: 16000,
+                white_x: 15635,
+                white_y: 16450,
+                max_luminance: 10_000_000,
+                min_luminance: 50,
+            }),
+            max_cll: Some(1000),
+            max_fall: Some(400),
+        });
+        let args = encode_color_args(Codec::SvtAv1, &format);
+        let params = args
+            .windows(2)
+            .find(|w| w[0] == "-svtav1-params")
+            .map(|w| w[1].clone())
+            .expect("svtav1-params present");
+        assert!(
+            params.contains("mastering-display=G(0.265,0.69)B(0.15,0.06)R(0.68,0.32)WP(0.3127,0.329)L(1000,0.005)"),
+            "got: {params}"
+        );
+        assert!(params.contains("content-light=1000,400"), "got: {params}");
+        // AV1 carries colour primaries/transfer via the standard -color_* options.
+        assert!(args.windows(2).any(|w| w[0] == "-color_trc" && w[1] == "smpte2084"));
+    }
+
+    #[test]
+    fn test_encode_color_args_no_hdr10_when_sdr() {
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        let format = SourceFormat::from_stream(&stream);
+        let args = encode_color_args(Codec::X265, &format);
+        assert!(!args.iter().any(|a| a.contains("master-display")));
+        assert!(!args.iter().any(|a| a.contains("max-cll")));
     }
 }

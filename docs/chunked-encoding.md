@@ -47,7 +47,7 @@ problems:
 
 Group an integer number of consecutive shots into **~3-minute chunks**:
 
-```
+```text
 Video: [shot1][shot2][shot3][shot4][shot5][shot6][shot7][shot8][shot9]...
 
 Chunk 1 (~3 min):        Chunk 2 (~3 min):        Chunk 3:
@@ -97,7 +97,7 @@ Source Video
 
 Group consecutive shots into chunks targeting ~3 minutes each:
 
-```
+```text
 Constraints:
   - Chunk boundaries must align with shot boundaries
   - Target duration: 1-4 minutes (3 min ideal)
@@ -107,7 +107,7 @@ Constraints:
 
 Algorithm:
 
-```
+```text
 target_duration = 180 seconds  (3 minutes)
 chunks = []
 current_chunk = []
@@ -164,7 +164,7 @@ Each worker:
 
 Concatenate chunk segments per rung into the final renditions:
 
-```
+```text
 Rung 1 (480p):  [chunk1_480p] + [chunk2_480p] + [chunk3_480p] → 480p.mp4
 Rung 2 (720p):  [chunk1_720p] + [chunk2_720p] + [chunk3_720p] → 720p.mp4
 Rung 3 (1080p): [chunk1_1080p]+ [chunk2_1080p]+ [chunk3_1080p]→ 1080p.mp4
@@ -177,7 +177,7 @@ chunk/shot boundaries.
 
 A complete ingest-to-delivery pipeline using viser with chunked encoding:
 
-```
+```text
 ┌─────────┐   ┌───────────┐   ┌─────────────┐   ┌─────────────┐
 │ Ingest  │──>│ Analyze   │──>│ Chunk &     │──>│ Encode      │
 │ source  │   │ (viser)     │   │ Distribute  │   │ (workers)   │

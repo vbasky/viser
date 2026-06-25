@@ -1494,11 +1494,15 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
     });
     let parallel = effective_parallel(args.parallel);
     let source_duration = result.source_info.format.duration;
-    let source_format = if let Some(video) = result.source_info.video_stream() {
+    let base_format = if let Some(video) = result.source_info.video_stream() {
         Some(viser_ffmpeg::SourceFormat::from_stream(video))
     } else {
         let info = viser_ffmpeg::probe(&source).await?;
         info.video_stream().map(viser_ffmpeg::SourceFormat::from_stream)
+    };
+    let source_format = match base_format {
+        Some(fmt) => Some(fmt.enrich_hdr10(&source).await),
+        None => None,
     };
 
     println!("Viser Per-Title Delivery");

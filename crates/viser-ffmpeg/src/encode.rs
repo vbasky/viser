@@ -294,6 +294,12 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
 
     args.extend(job.extra_args.iter().cloned());
 
+    // Rate control and HDR metadata can each emit a `-svtav1-params`; ffmpeg
+    // treats the option as last-wins, so merge them into one before the encode.
+    if job.codec == Codec::SvtAv1 {
+        coalesce_repeated_flag(&mut args, "-svtav1-params", ":");
+    }
+
     match pass {
         EncodePass::First(_) => {
             args.extend(["-f".into(), "null".into()]);
@@ -303,6 +309,34 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
     }
 
     Ok(args)
+}
+
+/// Merges repeated `flag value` pairs into a single occurrence whose value is the
+/// `sep`-joined union, keeping the position of the first occurrence.
+///
+/// ffmpeg AVOption-backed flags (e.g. `-svtav1-params`, `-x265-params`) are
+/// last-wins when repeated on a command line, so a later flag would silently
+/// drop the settings carried by an earlier one. Coalescing preserves both.
+fn coalesce_repeated_flag(args: &mut Vec<String>, flag: &str, sep: &str) {
+    let positions: Vec<usize> =
+        (0..args.len().saturating_sub(1)).filter(|&i| args[i] == flag).collect();
+    if positions.len() < 2 {
+        return;
+    }
+    let merged = positions.iter().map(|&i| args[i + 1].clone()).collect::<Vec<_>>().join(sep);
+    // Drop every flag+value pair except the first flag's position, which keeps
+    // the merged value.
+    let drop: std::collections::HashSet<usize> =
+        positions.iter().skip(1).flat_map(|&i| [i, i + 1]).collect();
+    let first_value = positions[0] + 1;
+    let mut out = Vec::with_capacity(args.len());
+    for (i, a) in args.drain(..).enumerate() {
+        if drop.contains(&i) {
+            continue;
+        }
+        out.push(if i == first_value { merged.clone() } else { a });
+    }
+    *args = out;
 }
 
 /// VAAPI render node to initialise. Overridable via `VISER_VAAPI_DEVICE` for
@@ -668,6 +702,87 @@ mod tests {
         args.iter().any(|s| s == a)
     }
 
+    fn hdr10_svtav1_format() -> SourceFormat {
+        use crate::{Hdr10Metadata, MasteringDisplay};
+        SourceFormat {
+            pix_fmt: "yuv420p10le".into(),
+            bit_depth: 10,
+            color_primaries: "bt2020".into(),
+            color_transfer: "smpte2084".into(),
+            color_space: "bt2020nc".into(),
+            is_hdr: true,
+            hdr10: Some(Hdr10Metadata {
+                mastering_display: Some(MasteringDisplay {
+                    green_x: 13250,
+                    green_y: 34500,
+                    blue_x: 7500,
+                    blue_y: 3000,
+                    red_x: 34000,
+                    red_y: 16000,
+                    white_x: 15635,
+                    white_y: 16450,
+                    max_luminance: 10_000_000,
+                    min_luminance: 50,
+                }),
+                max_cll: Some(1000),
+                max_fall: Some(400),
+            }),
+        }
+    }
+
+    #[test]
+    fn test_coalesce_repeated_flag_merges_values() {
+        let mut args = vec![
+            "-i".into(),
+            "in.mp4".into(),
+            "-svtav1-params".into(),
+            "enable-adaptive-quantization=0".into(),
+            "-pix_fmt".into(),
+            "yuv420p10le".into(),
+            "-svtav1-params".into(),
+            "mastering-display=X:content-light=1000,400".into(),
+            "out.mp4".into(),
+        ];
+        coalesce_repeated_flag(&mut args, "-svtav1-params", ":");
+        // Exactly one flag remains, holding both fragments, in first position.
+        assert_eq!(args.iter().filter(|a| *a == "-svtav1-params").count(), 1);
+        let merged =
+            args.windows(2).find(|w| w[0] == "-svtav1-params").map(|w| w[1].clone()).unwrap();
+        assert_eq!(
+            merged,
+            "enable-adaptive-quantization=0:mastering-display=X:content-light=1000,400"
+        );
+        // Unrelated args and output survive intact.
+        assert!(has_pair(&args, "-pix_fmt", "yuv420p10le"));
+        assert_eq!(args.last().unwrap(), "out.mp4");
+    }
+
+    #[test]
+    fn test_coalesce_repeated_flag_noop_when_single() {
+        let mut args = vec!["-svtav1-params".into(), "a=1".into(), "out.mp4".into()];
+        let before = args.clone();
+        coalesce_repeated_flag(&mut args, "-svtav1-params", ":");
+        assert_eq!(args, before);
+    }
+
+    #[test]
+    fn test_build_encode_args_svtav1_qp_hdr_single_params() {
+        let mut job = job_with_codec(Codec::SvtAv1, RateControlMode::Qp);
+        job.resolution = None;
+        job.source_format = Some(hdr10_svtav1_format());
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        // The AQ flag (rate control) and HDR metadata must coalesce into one.
+        assert_eq!(args.iter().filter(|a| *a == "-svtav1-params").count(), 1);
+        let params = args
+            .windows(2)
+            .find(|w| w[0] == "-svtav1-params")
+            .map(|w| w[1].clone())
+            .expect("svtav1-params present");
+        assert!(params.contains("enable-adaptive-quantization=0"), "got: {params}");
+        assert!(params.contains("mastering-display=G(0.265,0.69)"), "got: {params}");
+        assert!(params.contains("content-light=1000,400"), "got: {params}");
+    }
+
     // ── Software CRF ──
     #[test]
     fn test_build_encode_args_preserves_10bit_source() {
@@ -680,6 +795,7 @@ mod tests {
             color_transfer: "bt709".into(),
             color_space: "bt709".into(),
             is_hdr: false,
+            hdr10: None,
         });
         let args = build_encode_args(&job, EncodePass::Single).unwrap();
         assert!(has_pair(&args, "-pix_fmt", "yuv420p10le"));

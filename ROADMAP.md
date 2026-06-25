@@ -1,4 +1,4 @@
-# viser status & roadmap
+# viser roadmap
 
 viser today is a **content-adaptive VOD encoding toolkit**: probe, analyze,
 encode, and measure quality — all from a single Rust binary. This document
@@ -36,9 +36,12 @@ VideoToolbox, VAAPI, AMF — H.264/H.265).
 - [x] **Integration tests.** FATE-style end-to-end tests generate synthetic
       media with `ffmpeg -f lavfi` and exercise the full probe → encode →
       measure pipeline against real ffmpeg/ffprobe.
-- [ ] **10-bit pipeline correctness.** Verify that 10-bit content is correctly
-      detected, warned about, and that VMAF scores account for bit depth
-      differences between reference and distorted.
+- [x] **10-bit pipeline correctness.** 10-bit content is detected
+      (`bit_depth`), preserved through encode (output pix_fmt stays 10-bit),
+      and scored bit-depth-aware: `resolve_scoring_plan` keeps the native
+      high-bit-depth format for VMAF/PSNR, warns when reference and distorted
+      depths differ, and `psnr_peak` tracks the scoring depth. Covered by
+      `fate_10bit.rs` and `viser-quality::scoring` unit tests.
 
 ## P1 — highest-value features
 
@@ -76,8 +79,22 @@ VideoToolbox, VAAPI, AMF — H.264/H.265).
 - [x] **Two-pass VBR encoding.** `RateControlMode::Vbr` runs a two-pass encode
       against a target bitrate (`encode_two_pass`), alongside CRF, capped-CRF,
       and fixed-QP modes; per-title delivery maps saved analyses to VBR rungs.
-- [ ] **HDR support (proper).** PQ/HLG handling, HDR-aware VMAF models. Current
-      HDR detection gates behind `--allow-hdr` but VMAF scores are SDR-only.
+- [~] **HDR support (proper).** PQ/HLG handling, HDR-aware VMAF models.
+  - [x] HDR10 static-metadata preservation. `viser-ffmpeg::hdr` extracts
+        mastering-display colour volume (SMPTE ST 2086) and MaxCLL/MaxFALL from
+        the source's frame side data; `SourceFormat::enrich_hdr10` attaches it
+        across the per-title/per-segment/delivery pipelines. x265 re-signals it
+        via `master-display` / `max-cll`, and SVT-AV1 via `-svtav1-params`
+        `mastering-display` / `content-light` (real-valued grammar, with the
+        rate-control `-svtav1-params` coalesced). FATE round-trips verify both
+        codecs survive a re-encode.
+  - [x] HDR-aware scoring via tonemap-to-BT.709 (`--hdr-scoring`), shipped with
+        the 0.9.0 10-bit/HDR work.
+  - [ ] Native HDR-domain VMAF (no SDR tonemap) and HDR10 passthrough on the
+        hardware encoders (NVENC/QSV/VAAPI/AMF). libvmaf ships no official HDR
+        model, so the scoring side needs a PQ-domain path and differential
+        validation; the HW encoders need per-backend metadata flags (no shared
+        `master-display` string like the software encoders).
 - [ ] **Chunked/segmented encoding.** Distribute encodes across machines for
       long-form content. Currently in backlog.
 - [ ] **Scene-complexity blending.** Per-shot analysis produces separate ladders
