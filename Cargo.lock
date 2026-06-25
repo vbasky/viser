@@ -1471,7 +1471,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "viser"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "viser-chart",
  "viser-checkpoint",
@@ -1491,7 +1491,7 @@ dependencies = [
 
 [[package]]
 name = "viser-chart"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "plotters",
@@ -1503,7 +1503,7 @@ dependencies = [
 
 [[package]]
 name = "viser-checkpoint"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "hex",
@@ -1518,7 +1518,7 @@ dependencies = [
 
 [[package]]
 name = "viser-cli"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1547,7 +1547,7 @@ dependencies = [
 
 [[package]]
 name = "viser-compare"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1558,7 +1558,7 @@ dependencies = [
 
 [[package]]
 name = "viser-complexity"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1568,7 +1568,7 @@ dependencies = [
 
 [[package]]
 name = "viser-contextaware"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1583,7 +1583,7 @@ dependencies = [
 
 [[package]]
 name = "viser-encoding"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1595,7 +1595,7 @@ dependencies = [
 
 [[package]]
 name = "viser-ffmpeg"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "proptest",
@@ -1611,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "viser-hull"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "proptest",
  "serde",
@@ -1620,7 +1620,7 @@ dependencies = [
 
 [[package]]
 name = "viser-ladder"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "proptest",
  "serde",
@@ -1630,7 +1630,7 @@ dependencies = [
 
 [[package]]
 name = "viser-metrics"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "serde",
  "viser-quality",
@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "viser-persegment"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1651,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "viser-pershot"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1669,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "viser-pertitle"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1687,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "viser-quality"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "viser-shot"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde",
