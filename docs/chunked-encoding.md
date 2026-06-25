@@ -294,7 +294,17 @@ For SVT-AV1, per-frame QP can be controlled via a qpfile:
 
 ## Further Reading
 
+### Industry practice
+
 - Netflix: [Optimized Shot-Based Encodes](https://netflixtechblog.com/optimized-shot-based-encodes-now-streaming-4b9464204830)
-- Netflix: [Rebuilding Video Processing Pipeline](https://netflixtechblog.com/rebuilding-netflix-video-processing-pipeline-with-microservices-4e5e6310e359)
+- Netflix: [Per-Title Encode Optimization](https://netflixtechblog.com/per-title-encode-optimization-7e99450b2588)
 - Bitmovin: [Split and Stitch Encoding](https://bitmovin.com/blog/split-and-stitch-encoding/)
 - viser Research: [Chunked Encoding Collation](../research/12-chunked-encoding-collation.md)
+
+### Research papers
+
+- Giladi et al., [Massively Parallel Open Source Encoding for Adaptive Streaming](https://journal.smpte.org/conferences/SMPTE%202018/21/), SMPTE 2018 — defines the chunk encode "joblet" and discusses distributed encoding without significant quality impact.
+- Neugebauer, [Nagare Media Engine: A System for Cloud- and Edge-Native Network-based Multimedia Workflows](https://arxiv.org/abs/2509.24546), arXiv 2025 — NBMP-based cloud/edge workflow system covering task distribution and recovery.
+- Li et al., [Performance Analysis and Modeling of Video Transcoding Using Heterogeneous Cloud Services](https://arxiv.org/abs/1809.06529), arXiv 2018 — performance modeling of cloud video transcoding across heterogeneous instances.
+- Shu et al., [Predicting total time to compress a video corpus using online inference systems](https://arxiv.org/abs/2410.18260), IEEE VCIP 2024 — corpus-level transcoding cost prediction for cloud VOD pipelines.
+- Durbha et al., [Leveraging Compression to Construct Transferable Bitrate Ladders](https://arxiv.org/abs/2512.12952), arXiv 2025 — ML-based construction of content-adaptive, per-shot bitrate ladders and convex-hull approximations.
