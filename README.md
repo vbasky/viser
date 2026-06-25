@@ -47,7 +47,7 @@ bitrates.
 
 ## Architecture
 
-```bash
+```text
 viser/
 ├── crates/
 │   ├── viser-ffmpeg/         FFmpeg/FFprobe wrapper (encode, probe, path, cache)
@@ -240,8 +240,8 @@ viser quality measure --reference a.mp4 --distorted b.mp4
 `per-title deliver` reads a saved analysis JSON, encodes the selected ladder
 rungs as final delivery outputs, and writes a manifest describing the emitted
 files with their target and measured bitrates. Delivery supports both 2-pass
-VBR and capped-CRF output, plus optional local chunked encoding with automatic
-concatenation.
+VBR and capped-CRF output, plus optional local [chunked encoding](docs/chunked-encoding.md)
+with automatic concatenation.
 
 `per-title analyze` now detects HDR sources from probe metadata. By default it
 refuses HDR inputs because libvmaf-based analysis is still SDR-centric; pass
@@ -331,7 +331,7 @@ Rust-supported platform; only the prebuilt binaries are limited to these four.
 | License | BSD-2-Clause |
 | MSRV | 1.88 |
 
-## Status
+## Features
 
 All four optimization methods ported from the prior Go implementation, plus
 three additional features shipped since 0.3.0.
