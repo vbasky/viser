@@ -34,8 +34,10 @@ The section must use the exact header format the extractor matches:
 
 `scripts/release.sh` pre-flight-checks that you are on `main` with a clean tree,
 that the tag does not already exist, **and that CHANGELOG.md has a populated
-section for the version**, then bumps every crate version, commits, tags, pushes,
-and publishes to crates.io.
+section for the version**, then bumps every crate version, syncs `viser = "0.X"`
+/ `{ version = "0.X", ... }` lines in crate READMEs and `lib.rs` rustdoc to the
+new compat line (e.g. `0.10.0` → `"0.10"`), commits, tags, pushes, and
+publishes to crates.io.
 
 ## Verify the notes before tagging (optional manual check)
 

@@ -70,6 +70,17 @@ for crate in "${CRATES[@]}"; do
     perl -i -pe "s/(${crate//-/\\-} = \{ .*?)version = \"[^\"]+\"/\${1}version = \"$VERSION\"/" "crates/"*/Cargo.toml
 done
 
+# Sync README / rustdoc dependency examples (e.g. 0.10.0 -> viser = "0.10")
+COMPAT="${VERSION%.*}"
+export COMPAT
+while IFS= read -r -d '' f; do
+    perl -i -pe '
+        s/(viser(?:-[a-z-]+)?)\s*=\s*"\K0\.\d+(?:\.\d+)?(?=")/$ENV{COMPAT}/g;
+        s/(viser(?:-[a-z-]+)?)\s*=\s*\{\s*version\s*=\s*"\K0\.\d+(?:\.\d+)?(?=")/$ENV{COMPAT}/g;
+    ' "$f"
+done < <(find crates -type f \( -name README.md -o -path '*/src/lib.rs' \) -print0)
+echo "==> docs: dependency examples -> \"${COMPAT}\""
+
 # Commit and tag. Use a lowercase conventional-commit message ("chore: release
 # X.Y.Z") to match the rest of the history (feat:/fix:/docs:/chore:).
 git add -A
