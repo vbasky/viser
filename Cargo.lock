@@ -1541,6 +1541,7 @@ dependencies = [
  "viser-persegment",
  "viser-pershot",
  "viser-pertitle",
+ "viser-predict",
  "viser-quality",
  "viser-shot",
 ]
@@ -1622,8 +1623,10 @@ dependencies = [
 name = "viser-ladder"
 version = "0.10.0"
 dependencies = [
+ "anyhow",
  "proptest",
  "serde",
+ "tempfile",
  "viser-ffmpeg",
  "viser-hull",
 ]
@@ -1686,6 +1689,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "viser-predict"
+version = "0.10.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tokio",
+ "viser-complexity",
+ "viser-encoding",
+ "viser-ffmpeg",
+ "viser-hull",
+ "viser-ladder",
+ "viser-pertitle",
+ "viser-quality",
+]
+
+[[package]]
 name = "viser-quality"
 version = "0.10.0"
 dependencies = [
@@ -1707,6 +1727,14 @@ dependencies = [
  "serde_json",
  "tokio",
  "viser-ffmpeg",
+]
+
+[[package]]
+name = "viser-wasm"
+version = "0.10.0"
+dependencies = [
+ "viser-quality",
+ "wasm-bindgen",
 ]
 
 [[package]]

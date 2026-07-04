@@ -22,11 +22,13 @@ CRATES=(
     viser-encoding
     viser-checkpoint
     viser-pertitle
+    viser-predict
     viser-pershot
     viser-persegment
     viser-contextaware
     viser-compare
     viser-chart
+    viser-wasm
     viser
     viser-cli
 )

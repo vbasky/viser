@@ -5,8 +5,7 @@
 //! reference exists. The signal math here is pure Rust and deterministic; only
 //! frame decode shells out to FFmpeg (a `gray8` rawvideo pipe).
 //!
-//! Three model-free signals are computed (no trained models, unlike
-//! NIQE/BRISQUE):
+//! Three model-free signals are computed alongside trained NIQE/BRISQUE scores:
 //! - **sharpness** — variance of the Laplacian (higher = sharper/more detail);
 //! - **blockiness** — extra gradient at 8×8 block boundaries vs. interior
 //!   (lower = fewer blocking artefacts);
@@ -45,6 +44,14 @@ pub struct NoRefResult {
     pub blockiness_pooled: PooledStats,
     /// Noise distribution across frames.
     pub noise_pooled: PooledStats,
+    /// Mean NIQE score (lower is better).
+    pub niqe: f64,
+    /// Mean BRISQUE score (lower is better).
+    pub brisque: f64,
+    /// NIQE distribution across frames.
+    pub niqe_pooled: PooledStats,
+    /// BRISQUE distribution across frames.
+    pub brisque_pooled: PooledStats,
     /// Number of frames analysed.
     pub frames: usize,
 }
@@ -172,7 +179,8 @@ pub async fn measure_noref(input: &str, opts: &NoRefOpts) -> anyhow::Result<NoRe
     let mut stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("no ffmpeg stdout"))?;
 
     let mut buf = vec![0u8; frame_size];
-    let (mut sharp, mut block, mut noise) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut sharp, mut block, mut noise, mut niqe, mut brisque) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut idx = 0usize;
     loop {
         match stdout.read_exact(&mut buf).await {
@@ -181,6 +189,14 @@ pub async fn measure_noref(input: &str, opts: &NoRefOpts) -> anyhow::Result<NoRe
                     sharp.push(variance_of_laplacian(&buf, w, h));
                     block.push(blockiness(&buf, w, h));
                     noise.push(noise_sigma(&buf, w, h));
+                    let n = crate::niqe::score_frame(&buf, w, h);
+                    if n.is_finite() {
+                        niqe.push(n);
+                    }
+                    let b = crate::brisque::score_frame(&buf, w, h);
+                    if b.is_finite() {
+                        brisque.push(b);
+                    }
                 }
                 idx += 1;
             }
@@ -197,13 +213,19 @@ pub async fn measure_noref(input: &str, opts: &NoRefOpts) -> anyhow::Result<NoRe
     let sharpness_pooled = PooledStats::from_values(&sharp);
     let blockiness_pooled = PooledStats::from_values(&block);
     let noise_pooled = PooledStats::from_values(&noise);
+    let niqe_pooled = PooledStats::from_values(&niqe);
+    let brisque_pooled = PooledStats::from_values(&brisque);
     Ok(NoRefResult {
         sharpness: sharpness_pooled.mean,
         blockiness: blockiness_pooled.mean,
         noise: noise_pooled.mean,
+        niqe: niqe_pooled.mean,
+        brisque: brisque_pooled.mean,
         sharpness_pooled,
         blockiness_pooled,
         noise_pooled,
+        niqe_pooled,
+        brisque_pooled,
         frames: sharp.len(),
     })
 }

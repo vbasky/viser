@@ -93,6 +93,19 @@ pub fn preset_for_codec(codec: Codec, preset: &str) -> String {
     if codec.is_hardware() {
         return hw_preset_for_codec(codec, preset);
     }
+    if codec == Codec::Vp9 {
+        return match preset {
+            "ultrafast" | "superfast" => "8",
+            "veryfast" => "6",
+            "faster" => "5",
+            "fast" => "4",
+            "medium" => "2",
+            "slow" => "1",
+            "slower" | "veryslow" => "0",
+            other => return other.to_string(),
+        }
+        .to_string();
+    }
     if codec != Codec::SvtAv1 {
         return preset.to_string();
     }
@@ -216,6 +229,13 @@ mod tests {
     fn test_preset_for_codec_passthrough() {
         assert_eq!(preset_for_codec(Codec::X264, "veryfast"), "veryfast");
         assert_eq!(preset_for_codec(Codec::X265, "slow"), "slow");
+    }
+
+    #[test]
+    fn test_preset_for_codec_vp9_maps() {
+        assert_eq!(preset_for_codec(Codec::Vp9, "veryfast"), "6");
+        assert_eq!(preset_for_codec(Codec::Vp9, "medium"), "2");
+        assert_eq!(preset_for_codec(Codec::Vp9, "veryslow"), "0");
     }
 
     #[test]

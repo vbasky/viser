@@ -324,6 +324,49 @@ pub fn save_chart(data: &[u8], path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Writes R-D, per-codec, and ladder PNG charts for a per-title analysis result.
+pub fn write_analysis_charts(
+    points: &[Point],
+    hull: &Hull,
+    per_codec: &HashMap<Codec, Hull>,
+    ladder: &Ladder,
+    bd_rate: f64,
+    dir: &str,
+    opts: &Opts,
+) -> anyhow::Result<Vec<String>> {
+    std::fs::create_dir_all(dir)?;
+    let mut written = Vec::new();
+
+    if !points.is_empty() {
+        let path = format!("{dir}/rd_curve.png");
+        let data = rd_curve(points, hull, opts.clone())?;
+        if !data.is_empty() {
+            save_chart(&data, &path)?;
+            written.push(path);
+        }
+    }
+
+    if per_codec.len() > 1 {
+        let path = format!("{dir}/per_codec_rd.png");
+        let data = per_codec_rd_curve(per_codec, bd_rate, opts.clone())?;
+        if !data.is_empty() {
+            save_chart(&data, &path)?;
+            written.push(path);
+        }
+    }
+
+    if !ladder.rungs.is_empty() {
+        let path = format!("{dir}/ladder.png");
+        let data = ladder_chart(ladder, opts.clone())?;
+        if !data.is_empty() {
+            save_chart(&data, &path)?;
+            written.push(path);
+        }
+    }
+
+    Ok(written)
+}
+
 /// Maps an FFmpeg encoder name to a short display label (e.g. `libx264` -> `H.264`).
 ///
 /// Unknown codec strings are returned unchanged.

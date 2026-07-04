@@ -20,6 +20,8 @@ workspace = true
 viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.10.0" }
 viser-hull = { path = "../viser-hull", version = "0.10.0" }
 serde = { workspace = true }
+anyhow = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+tempfile = "3"

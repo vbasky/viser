@@ -11,11 +11,13 @@ members = [
     "crates/viser-encoding",
     "crates/viser-checkpoint",
     "crates/viser-pertitle",
+    "crates/viser-predict",
     "crates/viser-pershot",
     "crates/viser-persegment",
     "crates/viser-contextaware",
     "crates/viser-compare",
     "crates/viser-chart",
+    "crates/viser-wasm",
     "crates/viser-cli",
     "crates/viser",
 ]

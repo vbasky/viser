@@ -12,9 +12,14 @@ use tokio::process::Command;
 use tracing::warn;
 use viser_ffmpeg::{ProbeCache, ffmpeg_path};
 
+mod aggd;
+pub mod brisque;
+pub mod faithfulness;
+pub mod niqe;
 pub mod noref;
 pub mod pool;
 pub mod scoring;
+pub use faithfulness::{FaithfulnessOpts, FaithfulnessResult, measure_faithfulness};
 pub use noref::{NoRefOpts, NoRefResult, measure_noref};
 pub use pool::{PoolStrategy, PooledStats};
 pub use scoring::{HdrScoringMode, build_compare_filtergraph, build_vmaf_filtergraph};

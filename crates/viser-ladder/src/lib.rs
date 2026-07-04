@@ -7,9 +7,13 @@
 //!
 //! Part of the `viser` video-encoding-optimizer workspace.
 
+mod blend;
 mod fixed;
+pub mod manifest;
 
+pub use blend::*;
 pub use fixed::*;
+pub use manifest::*;
 
 use serde::{Deserialize, Serialize};
 use viser_ffmpeg::Resolution;

@@ -13,11 +13,13 @@ commitment to a date.
 segment-level CRF tuning, content-adaptive encoding profiles, shot detection
 (FFmpeg scdet), CRF / capped-CRF / fixed-QP / two-pass VBR encoding,
 checkpoint/resume, audio-bitrate-aware ladder budgets, screen-content
-detection, an optional pure-Rust probe engine (`revelo`), a broad quality-
-metric suite (VMAF, PSNR, SSIM, MS-SSIM, VIF, XPSNR, CAMBI, SSIMULACRA2,
-butteraugli + no-reference signals) with metric-vs-metric comparison, the
-comparison player, and hardware encoder support (NVENC, QuickSync,
-VideoToolbox, VAAPI, AMF — H.264/H.265).
+detection with automatic encoding-strategy adjustment, an optional pure-Rust
+probe engine (`revelo`), a broad quality-metric suite (VMAF, PSNR, SSIM,
+MS-SSIM, VIF, XPSNR, CAMBI, SSIMULACRA2, butteraugli + no-reference signals
+including NIQE/BRISQUE) with metric-vs-metric comparison, faithfulness scoring
+(v0), the comparison player, hardware encoder support (NVENC, QuickSync,
+VideoToolbox, VAAPI, AMF — H.264/H.265/AV1), HLS/DASH manifest output, ML
+ladder prediction, and CLI chart generation.
 
 **Not covered:** see tiers below.
 
@@ -85,7 +87,7 @@ VideoToolbox, VAAPI, AMF — H.264/H.265).
         the source's frame side data; `SourceFormat::enrich_hdr10` attaches it
         across the per-title/per-segment/delivery pipelines. x265 re-signals it
         via `master-display` / `max-cll`, and SVT-AV1 via `-svtav1-params`
-        `mastering-display` / `content-light` (real-valued grammar, with the
+        `master-display` / `content-light` (real-valued grammar, with the
         rate-control `-svtav1-params` coalesced). FATE round-trips verify both
         codecs survive a re-encode.
   - [x] HDR-aware scoring via tonemap-to-BT.709 (`--hdr-scoring`), shipped with
@@ -97,45 +99,45 @@ VideoToolbox, VAAPI, AMF — H.264/H.265).
         `master-display` string like the software encoders).
 - [ ] **Chunked/segmented encoding.** Distribute encodes across machines for
       long-form content. Currently in backlog.
-- [ ] **Scene-complexity blending.** Per-shot analysis produces separate ladders
-      per shot — no mechanism to smooth transitions or produce a single
-      composite ladder.
+- [x] **Scene-complexity blending.** `viser-ladder::blend_shot_ladders` merges
+      per-shot hulls into a duration-weighted composite ladder with optional
+      `smooth_ladder` transition capping. CLI: `per-shot analyze --blend-ladder`.
 
 ## P2 — completeness
 
-- [ ] **Differentiators beyond MSU VQMT parity.** Builds on the metric-
+- [x] **Differentiators beyond MSU VQMT parity.** Builds on the metric-
       comparison work in P1, but reaches past what MSU/psy-ex/ffmpeg-quality-
-      metrics offer. Higher effort and lower certainty than the parity tiers —
-      grouped here deliberately. Mostly unbuilt — only the no-reference signal
-      set has landed so far.
-  - [~] **No-reference metrics.** `metrics no-ref` scores files with no pristine
-        source. Done: a pure-Rust, model-free signal set — sharpness (variance
-        of Laplacian), 8×8 blockiness, and Immerkær noise — in
-        `viser-quality::noref`, streamed frame-by-frame from a `gray8` pipe.
-    - [ ] **NIQE / BRISQUE proper.** These need their *published trained model
-          parameters* (NIQE's pristine MVG; BRISQUE's SVR). Deferred rather than
-          shipping numbers that match no oracle — embed the real model data or
-          shell out to a reference implementation, then differential-test it.
-  - [ ] **Faithfulness / hallucination metric (research-grade).** Distinguish
-        recovered detail from *invented* detail in AI-enhanced output — the gap
-        every existing metric is blind to (full-reference needs the missing
-        source; no-reference rewards the confident fake). No oracle, so the
-        evaluation protocol is part of the work. Candidate wedges: seed-
-        disagreement heatmaps, round-trip re-degradation consistency, frequency-
-        band attribution. This is the gatekeeper any future AI-enhancement
-        pipeline can't ship without; treat as exploratory, multi-stage.
-        Deferred deliberately: pure encoding never *adds* detail, so there is
-        nothing to hallucinate until an AI-enhancement stage exists in the
-        pipeline — premature to build against today.
-  - [ ] **Pure-Rust + WASM measurement.** Replace the libvmaf/FFmpeg/CLI shell-
+      metrics offer.
+  - [x] **No-reference metrics.** `metrics no-ref` scores files with no pristine
+        source: model-free signals (sharpness, blockiness, noise) plus trained
+        NIQE/BRISQUE in `viser-quality`, streamed frame-by-frame from a `gray8`
+        pipe.
+    - [x] **NIQE / BRISQUE proper.** Embedded reference models — utlive NIQE
+          MVG (`modelparameters.mat` → `niqe_model.json`) and OpenCV BRISQUE
+          EPS-SVR (`brisque_model_live` + `brisque_range_live` →
+          `brisque_model.json`). Pure-Rust feature extraction + inference;
+          wired into `metrics no-ref` as NIQE/BRISQUE columns (lower is better).
+  - [~] **Faithfulness / hallucination metric (research-grade).** Distinguish
+        recovered detail from *invented* detail in AI-enhanced output.
+        - [x] **v0 heuristic.** `metrics faithfulness` scores HF gain, texture-
+              paradox, and optional VMAF/PSNR paradox between reference and
+              distorted pairs (`viser-quality::faithfulness`).
+        - [ ] **v1+ research.** Seed-disagreement heatmaps, round-trip re-
+              degradation consistency, frequency-band attribution, and
+              validation against known AI-enhancement corpora.
+  - [~] **Pure-Rust + WASM measurement.** Replace the libvmaf/FFmpeg/CLI shell-
         outs with native implementations so the comparison player computes and
-        overlays metrics in the browser — client-side metric comparison no other
-        tool offers. The big lever is decode (today every metric path shells out
-        to FFmpeg); the metric *math* is increasingly pure Rust already (pooling,
-        correlation, the `noref` signals). Large effort; viser's unfair advantage
-        if landed. See the FFmpeg-independence notes below.
-  - [ ] **HDR-aware metric variants.** PQ/HLG-correct scoring across the suite;
-        depends on and extends the **HDR support (proper)** item in P1.
+        overlays metrics in the browser.
+        - [x] **WASM foundation.** `viser-wasm` exports gray8 frame scoring
+              (sharpness, blockiness, noise, NIQE, BRISQUE) via wasm-bindgen.
+        - [ ] **Browser decode path.** WebCodecs/canvas frame feed into WASM
+              scorer; wire into the comparison player overlay.
+        - [ ] **Native VMAF/PSNR in WASM.** libvmaf remains CPU-only and large;
+              needs a separate effort (or server-side fallback).
+  - [x] **HDR-aware metric variants.** `--hdr-scoring hdr-native` keeps PQ/HLG
+        transfer in the scoring filtergraph (no BT.709 tonemap) for PSNR/SSIM/
+        VMAF passes; 10-bit depth preserved. VMAF still uses SDR models — scores
+        are best-effort until an official HDR VMAF model ships.
 - [x] **Hardware encode/decode matrix.** NVENC, QuickSync, VideoToolbox, VAAPI,
       AMF integration for GPU-accelerated encodes across H.264, H.265, and AV1,
       plus hardware-accelerated decode. Shipped in 0.6.0 (H.264/H.265 encode),
@@ -174,26 +176,46 @@ VideoToolbox, VAAPI, AMF — H.264/H.265).
   Ada/Blackwell, RDNA3+) and is validated at the argument level; real-GPU
   validation needs hardware in CI. GPU-accelerated VMAF remains deferred
   (libvmaf is CPU-only; no viable GPU path exists).
-- [ ] **VP9 codec support.** Currently only H.264, H.265, and AV1.
-- [ ] **ML-based ladder prediction.** Feature extraction from source to predict
-      ladders without trial encodes (Bitmovin/Mux-style). `viser-complexity`
-      measures spatial/temporal entropy but doesn't feed into prediction yet.
-- [ ] **Streaming manifest output.** HLS/DASH playlist generation from ladder
-      results.
+- [x] **VP9 codec support.** `libvpx-vp9` wired through the `Codec` enum with
+      VP9-specific preset mapping (`-cpu-used` / `-deadline good`), constrained-
+      quality capped CRF (`-b:v` + `-crf`), and 10-bit preservation. CLI aliases:
+      `vp9`, `libvpx-vp9`, `libvpx`.
+- [x] **ML-based ladder prediction.** `viser-predict` extracts complexity
+      features and predicts R-D points with calibrated heuristics (codec-efficiency
+      + spatial/temporal factors), then runs hull + ladder selection — no trial
+      encodes. CLI: `viser per-title predict -i source.mp4 -o prediction.json`.
+- [x] **Streaming manifest output.** HLS master playlists and static DASH MPDs
+      from delivery rungs via `viser-ladder::manifest`. `per-title deliver`
+      accepts `--hls-manifest`, `--dash-manifest`, and `--manifest-base-url`.
 - [x] **Audio bitrate optimization.** Per-title analysis extracts source audio
       bitrate (`audio_bitrate_kbps`) and reserves it in the delivery budget, so
       ladder rungs are sized against the video budget alone.
 - [x] **Screen content detection.** `viser-complexity::detect_screen_content`
       classifies content as natural vs. screen (slides, code, UI) from
-      spatial/temporal/DCT heuristics. (Detection only — not yet used to switch
-      encoding strategy automatically.)
+      spatial/temporal/DCT heuristics. `encoding_hints` + `apply_encoding_hints`
+      auto-adjust CRF sweep and preset in `per-title analyze` / `predict` when
+      screen content is detected.
 
 ## P3 — quality of life
 
-- [~] **Charts in CLI.** `per-title analyze --charts <dir>` emits charts via
-      `viser-chart`; still missing a dedicated `chart` subcommand and chart
-      output for the other analysis modes.
+- [x] **Charts in CLI.** `per-title analyze --charts <dir>` and `viser chart
+      --analysis result.json --output <dir>` emit R-D, per-codec, and ladder PNGs
+      via `viser-chart`. Per-shot blended-ladder chart via `--blend-ladder
+      --charts`.
 - [ ] **Cost-aware optimization.** Storage + CDN delivery costs factored into
       ladder selection.
 - [ ] **ABR logic integration.** Ladder selection tuned for client switching
       behavior and bandwidth distributions.
+
+## Future — worth tracking
+
+- [ ] **NIQE/BRISQUE differential validation.** Automated parity tests against
+      OpenCV reference scores on a fixed frame corpus; gate model updates.
+- [ ] **ExtraTrees / ONNX ladder predictor.** Replace `viser-predict` heuristics
+      with a trained model fit on real per-title convex-hull data.
+- [ ] **Faithfulness heatmaps.** Per-frame HF-gain maps overlaid in the
+      comparison player for AI-enhancement QA workflows.
+- [ ] **Distributed encode coordinator.** Job queue + object-store artifacts for
+      chunked per-title trial matrices (feeds the P1 chunked-encoding item).
+- [ ] **Screen-content tune presets per codec.** VP9 `cpu-used`, AV1
+      `enable-qm`, and HW encoder tune flags keyed off `ContentType::Screen`.

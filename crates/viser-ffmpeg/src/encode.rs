@@ -279,6 +279,8 @@ fn build_encode_args(job: &EncodeJob, pass: EncodePass<'_>) -> anyhow::Result<Ve
     if !job.preset.is_empty() {
         if job.codec.is_hardware() {
             add_hw_preset(&mut args, job.codec, &job.preset);
+        } else if job.codec == Codec::Vp9 {
+            add_vp9_preset(&mut args, &job.preset);
         } else {
             args.extend(["-preset".into(), job.preset.clone()]);
         }
@@ -387,10 +389,16 @@ fn build_sw_args(
             if job.max_bitrate <= 0.0 {
                 anyhow::bail!("max bitrate must be greater than zero for capped CRF mode");
             }
-            let bufsize = if job.bufsize > 0.0 { job.bufsize } else { job.max_bitrate * 2.0 };
             args.extend(["-crf".into(), job.crf.to_string()]);
-            args.extend(["-maxrate".into(), format!("{:.0}k", job.max_bitrate)]);
-            args.extend(["-bufsize".into(), format!("{bufsize:.0}k")]);
+            if job.codec == Codec::Vp9 {
+                // libvpx constrained-quality mode (Google's VP9 VOD recommendation).
+                args.extend(["-b:v".into(), format!("{:.0}k", job.max_bitrate)]);
+                args.extend(["-deadline".into(), "good".into()]);
+            } else {
+                let bufsize = if job.bufsize > 0.0 { job.bufsize } else { job.max_bitrate * 2.0 };
+                args.extend(["-maxrate".into(), format!("{:.0}k", job.max_bitrate)]);
+                args.extend(["-bufsize".into(), format!("{bufsize:.0}k")]);
+            }
         }
         RateControlMode::Vbr => {
             if job.target_bitrate <= 0.0 {
@@ -509,6 +517,26 @@ fn crf_to_qsv_quality(crf: i32) -> i32 {
 fn crf_to_vt_quality(crf: i32) -> f64 {
     let q = 1.0 - (crf as f64 / 51.0);
     q.clamp(0.0, 1.0)
+}
+
+fn add_vp9_preset(args: &mut Vec<String>, preset: &str) {
+    args.extend(["-cpu-used".into(), map_vp9_cpu_used(preset).into()]);
+    args.extend(["-deadline".into(), "good".into()]);
+    args.extend(["-row-mt".into(), "1".into()]);
+}
+
+fn map_vp9_cpu_used(preset: &str) -> &str {
+    match preset {
+        "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" => preset,
+        "ultrafast" | "superfast" => "8",
+        "veryfast" => "6",
+        "faster" => "5",
+        "fast" => "4",
+        "medium" => "2",
+        "slow" => "1",
+        "slower" | "veryslow" => "0",
+        other => other,
+    }
 }
 
 fn add_hw_preset(args: &mut Vec<String>, codec: Codec, preset: &str) {
@@ -842,6 +870,32 @@ mod tests {
         .unwrap();
         assert!(has_pair(&args, "-c:v", "libsvtav1"));
         assert!(has_pair(&args, "-crf", "23"));
+    }
+
+    #[test]
+    fn test_vp9_crf_args() {
+        let args = build_encode_args(
+            &job_with_codec(Codec::Vp9, RateControlMode::Crf),
+            EncodePass::Single,
+        )
+        .unwrap();
+        assert!(has_pair(&args, "-c:v", "libvpx-vp9"));
+        assert!(has_pair(&args, "-crf", "23"));
+        assert!(has_pair(&args, "-cpu-used", "2"));
+        assert!(has_pair(&args, "-deadline", "good"));
+        assert!(has_pair(&args, "-row-mt", "1"));
+        assert!(!has_arg(&args, "-preset"));
+    }
+
+    #[test]
+    fn test_vp9_capped_crf_uses_constrained_quality() {
+        let mut job = job_with_codec(Codec::Vp9, RateControlMode::CappedCrf);
+        job.max_bitrate = 2000.0;
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        assert!(has_pair(&args, "-crf", "23"));
+        assert!(has_pair(&args, "-b:v", "2000k"));
+        assert!(has_pair(&args, "-deadline", "good"));
+        assert!(!has_arg(&args, "-maxrate"));
     }
 
     // ── Software QP ──
@@ -1676,7 +1730,7 @@ mod tests {
     // ── All software codecs + modes use correct codec string ──
     #[test]
     fn test_all_sw_codecs_have_correct_codec_string() {
-        for codec in &[Codec::X264, Codec::X265, Codec::SvtAv1] {
+        for codec in &[Codec::X264, Codec::X265, Codec::SvtAv1, Codec::Vp9] {
             let job = EncodeJob {
                 codec: *codec,
                 preset: String::new(),
@@ -1726,6 +1780,7 @@ mod tests {
                 Just(Codec::X264),
                 Just(Codec::X265),
                 Just(Codec::SvtAv1),
+                Just(Codec::Vp9),
                 Just(Codec::NvencH264),
                 Just(Codec::NvencH265),
                 Just(Codec::QsvH264),
@@ -1843,7 +1898,7 @@ mod tests {
                 crf in 0i32..63i32,
                 preset in ".*",
             ) {
-                for codec in &[Codec::X264, Codec::X265, Codec::SvtAv1] {
+                for codec in &[Codec::X264, Codec::X265, Codec::SvtAv1, Codec::Vp9] {
                     let job = EncodeJob {
                         codec: *codec, crf, rate_control: RateControlMode::Crf,
                         preset: preset.clone(), resolution: None, extra_args: vec![],
@@ -2003,7 +2058,7 @@ mod tests {
             fn vbr_single_pass_errors_for_sw_codecs(
                 target_br in 100.0f64..100000.0f64,
             ) {
-                for codec in &[Codec::X264, Codec::X265, Codec::SvtAv1] {
+                for codec in &[Codec::X264, Codec::X265, Codec::SvtAv1, Codec::Vp9] {
                     let job = EncodeJob {
                         codec: *codec, rate_control: RateControlMode::Vbr,
                         target_bitrate: target_br,

@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.11.0] - 2026-07-04
+
+P2 completeness tier: VP9, streaming manifests, trained no-reference metrics,
+feature-based ladder prediction, faithfulness scoring, WASM metric foundation,
+per-shot ladder blending, screen-content encoding auto-tune, and CLI charts.
+
+### Added
+
+- **VP9 codec** — `Codec::Vp9` (`libvpx-vp9`) with `-cpu-used` / `-deadline good`
+  presets, constrained-quality capped CRF, and 10-bit preservation. CLI aliases:
+  `vp9`, `libvpx-vp9`, `libvpx`.
+- **Streaming manifests** — `viser-ladder::manifest` writes HLS master playlists and
+  static DASH MPDs from delivery rungs. `per-title deliver` accepts
+  `--hls-manifest`, `--dash-manifest`, and `--manifest-base-url`.
+- **NIQE / BRISQUE** — pure-Rust feature extraction and inference with embedded
+  reference models (`niqe_model.json`, `brisque_model.json`). Wired into
+  `metrics no-ref` as additional columns (lower is better).
+- **`viser-predict`** — feature-based R-D point and ladder prediction from
+  complexity analysis (no trial encodes). CLI: `per-title predict`.
+- **Faithfulness metric (v0)** — `viser-quality::faithfulness` detects invented
+  detail via HF gain, texture-paradox, and optional VMAF/PSNR paradox signals.
+  CLI: `metrics faithfulness -r ref -d distorted`.
+- **`viser-wasm`** — wasm-bindgen exports for gray8 frame scoring (sharpness,
+  blockiness, noise, NIQE, BRISQUE) for browser-side metric overlays.
+- **Scene-complexity blending** — `viser-ladder::blend_shot_ladders` and
+  `smooth_ladder` merge per-shot hulls into a duration-weighted composite ladder.
+  CLI: `per-shot analyze --blend-ladder`.
+- **Screen-content encoding strategy** — `encoding_hints` / `apply_encoding_hints`
+  auto-adjust CRF sweep and preset in `per-title analyze` and `predict` when
+  screen content (slides/code/UI) is detected.
+- **CLI charts** — `per-title analyze --charts <dir>` and `viser chart` emit R-D,
+  per-codec, and ladder PNGs via `viser-chart`. Per-shot blended-ladder chart via
+  `--blend-ladder --charts`.
+- **`--hdr-scoring hdr-native`** — keeps PQ/HLG transfer in the scoring filtergraph
+  (no BT.709 tonemap) for PSNR/SSIM/VMAF passes on HDR sources.
+
+### Changed
+
+- Per-title analysis reserves source audio bitrate in the delivery budget
+  (`audio_bitrate_kbps` on analysis results and ladder opts).
+- `viser-ladder` gains `anyhow` dependency for manifest I/O error handling.
+
 ## [0.10.0] - 2026-06-25
 
 HDR10 static-metadata preservation: PQ/HLG encodes now carry mastering-display

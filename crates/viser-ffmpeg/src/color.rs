@@ -105,7 +105,7 @@ pub fn codec_supports_bit_depth(codec: Codec, depth: u8) -> bool {
         return true;
     }
     match codec {
-        Codec::X264 | Codec::X265 | Codec::SvtAv1 => true,
+        Codec::X264 | Codec::X265 | Codec::SvtAv1 | Codec::Vp9 => true,
         _ => false,
     }
 }

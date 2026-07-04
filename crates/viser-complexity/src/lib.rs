@@ -398,6 +398,69 @@ pub fn detect_screen_content(profile: &Profile) -> ScreenContentDetection {
     ScreenContentDetection { content_type, confidence: score, reason }
 }
 
+/// Encoding strategy adjustments derived from screen-content detection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncodingHints {
+    /// CRF offset applied to all trial values (negative = higher quality).
+    pub crf_offset: i32,
+    /// Drop the N highest CRF values from the sweep.
+    pub drop_high_crf: usize,
+    /// Suggested preset override (`None` = keep the caller's preset).
+    pub preset: Option<String>,
+    /// Human-readable explanation of the adjustments.
+    pub reason: String,
+}
+
+/// Derives encoding adjustments from a screen-content detection result.
+///
+/// Screen content (slides, code, UI) benefits from sharper presets and lower CRF
+/// because static high-frequency detail is cheap to encode at high quality.
+pub fn encoding_hints(detection: &ScreenContentDetection) -> EncodingHints {
+    if detection.content_type != ContentType::Screen {
+        return EncodingHints {
+            crf_offset: 0,
+            drop_high_crf: 0,
+            preset: None,
+            reason: "natural video — no encoding adjustments".into(),
+        };
+    }
+
+    let (crf_offset, drop_high, preset) = if detection.confidence >= 90.0 {
+        (-4, 2, Some("slow".into()))
+    } else if detection.confidence >= 70.0 {
+        (-3, 1, Some("medium".into()))
+    } else {
+        (-2, 1, None)
+    };
+
+    EncodingHints {
+        crf_offset,
+        drop_high_crf: drop_high,
+        preset,
+        reason: format!(
+            "screen content ({:.0}% confidence): {}",
+            detection.confidence, detection.reason
+        ),
+    }
+}
+
+/// Applies [`EncodingHints`] to a CRF sweep and preset in-place.
+pub fn apply_encoding_hints(crf_values: &mut Vec<i32>, preset: &mut String, hints: &EncodingHints) {
+    if hints.crf_offset != 0 {
+        for c in crf_values.iter_mut() {
+            *c = (*c + hints.crf_offset).clamp(0, 51);
+        }
+    }
+    if hints.drop_high_crf > 0 && crf_values.len() > hints.drop_high_crf {
+        crf_values.sort_unstable();
+        let keep = crf_values.len() - hints.drop_high_crf;
+        crf_values.truncate(keep);
+    }
+    if let Some(ref p) = hints.preset {
+        *preset = p.clone();
+    }
+}
+
 #[cfg(test)]
 mod screen_tests {
     use super::*;
@@ -455,6 +518,47 @@ mod screen_tests {
         let detection = detect_screen_content(&profile);
         assert_eq!(detection.content_type, ContentType::Natural);
         assert_eq!(detection.confidence, 0.0);
+    }
+
+    #[test]
+    fn test_encoding_hints_natural_video() {
+        let detection = ScreenContentDetection {
+            content_type: ContentType::Natural,
+            confidence: 0.0,
+            reason: "natural".into(),
+        };
+        let hints = encoding_hints(&detection);
+        assert_eq!(hints.crf_offset, 0);
+        assert_eq!(hints.drop_high_crf, 0);
+        assert!(hints.preset.is_none());
+    }
+
+    #[test]
+    fn test_encoding_hints_screen_slides() {
+        let detection = ScreenContentDetection {
+            content_type: ContentType::Screen,
+            confidence: 95.0,
+            reason: "slides".into(),
+        };
+        let hints = encoding_hints(&detection);
+        assert_eq!(hints.crf_offset, -4);
+        assert_eq!(hints.drop_high_crf, 2);
+        assert_eq!(hints.preset.as_deref(), Some("slow"));
+    }
+
+    #[test]
+    fn test_apply_encoding_hints() {
+        let mut crf = vec![18, 22, 26, 30, 34, 38, 42];
+        let mut preset = "veryfast".to_string();
+        let hints = EncodingHints {
+            crf_offset: -2,
+            drop_high_crf: 2,
+            preset: Some("medium".into()),
+            reason: "test".into(),
+        };
+        apply_encoding_hints(&mut crf, &mut preset, &hints);
+        assert_eq!(crf, vec![16, 20, 24, 28, 32]);
+        assert_eq!(preset, "medium");
     }
 
     #[test]

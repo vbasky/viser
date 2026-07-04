@@ -75,6 +75,8 @@ enum Commands {
         #[command(subcommand)]
         command: MetricsCommands,
     },
+    /// Generate PNG charts from saved analysis JSON
+    Chart(ChartArgs),
 }
 
 // ── Encode ──
@@ -192,6 +194,40 @@ enum MetricsCommands {
     /// Score files with no-reference signals (no pristine source needed)
     #[command(alias = "noref")]
     NoRef(MetricsNoRefArgs),
+    /// Detect invented detail in enhanced/distorted output vs. a reference (v0)
+    Faithfulness(MetricsFaithfulnessArgs),
+}
+
+#[derive(Parser)]
+struct MetricsFaithfulnessArgs {
+    /// Reference (original) video file
+    #[arg(short, long)]
+    reference: String,
+    /// Distorted or AI-enhanced video file
+    #[arg(short, long)]
+    distorted: String,
+    /// Analyse every Nth frame (0 or 1 = every frame)
+    #[arg(long, default_value_t = 5)]
+    stride: usize,
+    /// Also check VMAF/PSNR quality paradox (slower)
+    #[arg(long)]
+    quality_paradox: bool,
+    /// Save results as JSON
+    #[arg(short, long)]
+    output: Option<String>,
+}
+
+#[derive(Parser)]
+struct ChartArgs {
+    /// Saved per-title analysis JSON
+    #[arg(short, long)]
+    analysis: String,
+    /// Directory to write PNG charts
+    #[arg(short, long)]
+    output: String,
+    /// Chart title
+    #[arg(long, default_value = "")]
+    title: String,
 }
 
 #[derive(Parser)]
@@ -258,6 +294,8 @@ enum HdrScoringArg {
     Tonemap,
     /// Keep native pixel format (may produce unreliable VMAF for HDR).
     Native,
+    /// Score HDR in native PQ/HLG transfer without tonemapping to BT.709.
+    HdrNative,
 }
 
 impl From<HdrScoringArg> for viser_quality::HdrScoringMode {
@@ -266,6 +304,7 @@ impl From<HdrScoringArg> for viser_quality::HdrScoringMode {
             HdrScoringArg::Auto => viser_quality::HdrScoringMode::Auto,
             HdrScoringArg::Tonemap => viser_quality::HdrScoringMode::Tonemap,
             HdrScoringArg::Native => viser_quality::HdrScoringMode::Native,
+            HdrScoringArg::HdrNative => viser_quality::HdrScoringMode::HdrNative,
         }
     }
 }
@@ -336,6 +375,8 @@ struct MetricsCompareArgs {
 enum PerTitleCommands {
     /// Run per-title analysis
     Analyze(PerTitleAnalyzeArgs),
+    /// Predict a ladder from content features (no trial encodes)
+    Predict(PerTitlePredictArgs),
     /// Encode final delivery ladder rungs from saved per-title analysis
     Deliver(PerTitleDeliverArgs),
 }
@@ -396,6 +437,34 @@ struct PerTitleAnalyzeArgs {
 }
 
 #[derive(Parser)]
+struct PerTitlePredictArgs {
+    /// Source video file
+    #[arg(short, long)]
+    input: String,
+    /// Output JSON file
+    #[arg(short, long)]
+    output: Option<String>,
+    /// Codecs to predict
+    #[arg(long, value_delimiter = ',', default_values_t = vec!["libx264".to_string()])]
+    codecs: Vec<String>,
+    /// Resolutions to predict
+    #[arg(long, value_delimiter = ',', default_values_t = vec!["480p".to_string(), "720p".to_string(), "1080p".to_string()])]
+    resolutions: Vec<String>,
+    /// CRF values to predict
+    #[arg(long, value_delimiter = ',', default_values_t = vec![18, 22, 26, 30, 34, 38, 42])]
+    crf_values: Vec<i32>,
+    /// Number of ladder rungs
+    #[arg(long, default_value_t = 6)]
+    rungs: i32,
+    /// Minimum bitrate (kbps)
+    #[arg(long, default_value_t = 200.0)]
+    min_bitrate: f64,
+    /// Maximum bitrate (kbps)
+    #[arg(long, default_value_t = 8000.0)]
+    max_bitrate: f64,
+}
+
+#[derive(Parser)]
 struct PerTitleDeliverArgs {
     /// Saved per-title analysis JSON file
     #[arg(short, long)]
@@ -424,6 +493,15 @@ struct PerTitleDeliverArgs {
     /// Optional manifest output path (defaults to <output-dir>/delivery_manifest.json)
     #[arg(long)]
     manifest: Option<String>,
+    /// Optional HLS master playlist output path (e.g. <output-dir>/master.m3u8)
+    #[arg(long)]
+    hls_manifest: Option<String>,
+    /// Optional DASH MPD output path (e.g. <output-dir>/manifest.mpd)
+    #[arg(long)]
+    dash_manifest: Option<String>,
+    /// Base URL prefix for streaming manifest file references (CDN origin)
+    #[arg(long)]
+    manifest_base_url: Option<String>,
     /// Output container extension (without dot)
     #[arg(long, default_value = "mp4")]
     extension: String,
@@ -499,6 +577,15 @@ struct PerShotAnalyzeArgs {
     /// Max parallel shot analyses (0 = auto)
     #[arg(long, default_value_t = 0)]
     parallel: i32,
+    /// Blend per-shot hulls into a composite ladder
+    #[arg(long)]
+    blend_ladder: bool,
+    /// Number of blended ladder rungs
+    #[arg(long, default_value_t = 6)]
+    blend_rungs: i32,
+    /// Directory to save PNG charts
+    #[arg(long)]
+    charts: Option<String>,
     /// Allow best-effort analysis on HDR sources
     #[arg(long)]
     allow_hdr: bool,
@@ -679,6 +766,7 @@ async fn main() -> anyhow::Result<()> {
             },
             Commands::PerTitle { command } => match command {
                 PerTitleCommands::Analyze(args) => cmd_pertitle_analyze(args).await,
+                PerTitleCommands::Predict(args) => cmd_pertitle_predict(args).await,
                 PerTitleCommands::Deliver(args) => cmd_pertitle_deliver(args).await,
             },
             Commands::PerShot { command } => match command {
@@ -695,7 +783,9 @@ async fn main() -> anyhow::Result<()> {
             Commands::Metrics { command } => match command {
                 MetricsCommands::Compare(args) => cmd_metrics_compare(args).await,
                 MetricsCommands::NoRef(args) => cmd_metrics_noref(args).await,
+                MetricsCommands::Faithfulness(args) => cmd_metrics_faithfulness(args).await,
             },
+            Commands::Chart(args) => cmd_chart(args).await,
         }
     };
 
@@ -1251,10 +1341,12 @@ async fn cmd_metrics_noref(args: MetricsNoRefArgs) -> anyhow::Result<()> {
 
     // (label, higher_is_better, decimals, accessor)
     let cols: [(&str, bool, usize, fn(&viser_quality::NoRefResult) -> &viser_quality::PooledStats);
-        3] = [
+        5] = [
         ("SHARP", true, 1, |r| &r.sharpness_pooled),
         ("BLOCK", false, 3, |r| &r.blockiness_pooled),
         ("NOISE", false, 3, |r| &r.noise_pooled),
+        ("NIQE", false, 2, |r| &r.niqe_pooled),
+        ("BRISQUE", false, 2, |r| &r.brisque_pooled),
     ];
 
     let mut results: Vec<(String, viser_quality::NoRefResult)> = Vec::new();
@@ -1348,6 +1440,85 @@ async fn cmd_metrics_noref(args: MetricsNoRefArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn cmd_pertitle_predict(args: PerTitlePredictArgs) -> anyhow::Result<()> {
+    let resolutions = parse_resolutions(&args.resolutions)?;
+    let codecs = parse_codecs(&args.codecs)?;
+
+    let mut crf_values = args.crf_values;
+    let mut preset = "veryfast".to_string();
+    if let Ok(profile) =
+        viser_complexity::analyze(&args.input, viser_complexity::AnalyzeOpts::default()).await
+    {
+        let detection = viser_complexity::detect_screen_content(&profile);
+        let hints = viser_complexity::encoding_hints(&detection);
+        if detection.content_type == viser_complexity::ContentType::Screen {
+            println!("  Screen content: {} — adjusting prediction CRF sweep", hints.reason);
+            viser_complexity::apply_encoding_hints(&mut crf_values, &mut preset, &hints);
+        }
+    }
+
+    let cfg = viser_pertitle::Config {
+        encoding: viser_encoding::Config {
+            resolutions,
+            crf_values,
+            codecs,
+            preset,
+            subsample: 0,
+            parallel: 1,
+            rate_control: viser_ffmpeg::RateControlMode::Crf,
+        },
+        ladder_opts: viser_ladder::Opts {
+            num_rungs: args.rungs,
+            min_bitrate: args.min_bitrate,
+            max_bitrate: args.max_bitrate,
+            min_vmaf: 40.0,
+            max_vmaf: 97.0,
+            audio_bitrate_kbps: 0.0,
+        },
+        checkpoint_path: String::new(),
+        vmaf_model: String::new(),
+        opt_metric: viser_quality::Metric::Vmaf,
+        allow_hdr: false,
+        hdr_scoring: viser_quality::HdrScoringMode::Auto,
+    };
+
+    println!("Viser Per-Title Prediction (feature-based, no encodes)");
+    println!("  Source: {}", args.input);
+
+    let result = viser_predict::predict(&args.input, cfg).await?;
+
+    println!(
+        "  Complexity: {:.1} (spatial {:.3}, temporal {:.1})",
+        result.complexity.overall_score,
+        result.complexity.avg_spatial,
+        result.complexity.avg_temporal
+    );
+    println!("  Predicted points: {}", result.points.len());
+    println!("  Ladder rungs: {}", result.ladder.rungs.len());
+    for w in &result.warnings {
+        println!("  Warning: {w}");
+    }
+
+    for rung in &result.ladder.rungs {
+        println!(
+            "    #{} {} {} CRF {} -> {:.0} kbps, VMAF {:.1}",
+            rung.index + 1,
+            rung.point.resolution.label(),
+            rung.point.codec,
+            rung.point.crf,
+            rung.point.bitrate,
+            rung.point.vmaf
+        );
+    }
+
+    if let Some(path) = args.output {
+        result.save_json(&path)?;
+        println!("\nPrediction saved to: {path}");
+    }
+
+    Ok(())
+}
+
 async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
     let resolutions = parse_resolutions(&args.resolutions)?;
     let codecs = parse_codecs(&args.codecs)?;
@@ -1357,12 +1528,25 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
         _ => viser_ffmpeg::RateControlMode::Crf,
     };
 
+    let mut crf_values = args.crf_values.clone();
+    let mut preset = args.preset.clone();
+    if let Ok(profile) =
+        viser_complexity::analyze(&args.input, viser_complexity::AnalyzeOpts::default()).await
+    {
+        let detection = viser_complexity::detect_screen_content(&profile);
+        let hints = viser_complexity::encoding_hints(&detection);
+        if detection.content_type == viser_complexity::ContentType::Screen {
+            println!("  Screen content: {} — adjusting encoding strategy", hints.reason);
+            viser_complexity::apply_encoding_hints(&mut crf_values, &mut preset, &hints);
+        }
+    }
+
     let cfg = viser_pertitle::Config {
         encoding: viser_encoding::Config {
             resolutions: resolutions.clone(),
-            crf_values: args.crf_values.clone(),
+            crf_values: crf_values.clone(),
             codecs: codecs.clone(),
-            preset: args.preset.clone(),
+            preset: preset.clone(),
             subsample: args.subsample,
             parallel: args.parallel,
             rate_control,
@@ -1382,14 +1566,14 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
         hdr_scoring: args.hdr_scoring.into(),
     };
 
-    let total = resolutions.len() * codecs.len() * args.crf_values.len();
+    let total = resolutions.len() * codecs.len() * crf_values.len();
     println!("Viser Per-Title Analysis");
     println!("  Source:  {}", args.input);
     println!(
         "  Trials:  {} ({} res x {} CRF x {} codecs)",
         total,
         resolutions.len(),
-        args.crf_values.len(),
+        crf_values.len(),
         codecs.len()
     );
 
@@ -1449,9 +1633,94 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
         }
     }
 
+    if let Some(ref charts_dir) = args.charts {
+        let bd_rate = result.per_codec.values().next().map(|_| 0.0).unwrap_or(0.0);
+        let chart_opts = viser_chart::Opts {
+            title: Path::new(&args.input)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("analysis")
+                .to_string(),
+            ..Default::default()
+        };
+        let written = viser_chart::write_analysis_charts(
+            &result.points,
+            &result.hull,
+            &result.per_codec,
+            &result.ladder,
+            bd_rate,
+            charts_dir,
+            &chart_opts,
+        )?;
+        for path in &written {
+            println!("  Chart: {path}");
+        }
+    }
+
     if let Some(output) = args.output {
         result.save_json(&output)?;
         println!("\nResults saved to: {output}");
+    }
+    Ok(())
+}
+
+async fn cmd_chart(args: ChartArgs) -> anyhow::Result<()> {
+    validate_file(&args.analysis)?;
+    let result = viser_pertitle::Result::load_json(&args.analysis)?;
+    let title = if args.title.is_empty() {
+        Path::new(&result.source)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("analysis")
+            .to_string()
+    } else {
+        args.title
+    };
+    let chart_opts = viser_chart::Opts { title, ..Default::default() };
+    let written = viser_chart::write_analysis_charts(
+        &result.points,
+        &result.hull,
+        &result.per_codec,
+        &result.ladder,
+        0.0,
+        &args.output,
+        &chart_opts,
+    )?;
+    for path in &written {
+        println!("Wrote {path}");
+    }
+    Ok(())
+}
+
+async fn cmd_metrics_faithfulness(args: MetricsFaithfulnessArgs) -> anyhow::Result<()> {
+    validate_file(&args.reference)?;
+    validate_file(&args.distorted)?;
+    println!(
+        "Faithfulness check\n  Reference:  {}\n  Distorted: {}",
+        args.reference, args.distorted
+    );
+    let result = viser_quality::measure_faithfulness(
+        &args.reference,
+        &args.distorted,
+        &viser_quality::FaithfulnessOpts {
+            stride: args.stride,
+            check_quality_paradox: args.quality_paradox,
+            ..Default::default()
+        },
+    )
+    .await?;
+    println!("\n  Score:              {:.1} / 100", result.score);
+    println!("  HF gain:            {:.3}", result.hf_gain);
+    println!("  Sharpness ratio:    {:.3}", result.sharpness_ratio);
+    println!("  Texture paradox:    {:.1}% of frames", result.texture_paradox_rate * 100.0);
+    if args.quality_paradox {
+        println!("  Quality paradox:    {:.3}", result.quality_paradox);
+    }
+    println!("  Frames analysed:    {}", result.frames);
+    println!("  {}", result.summary);
+    if let Some(path) = args.output {
+        std::fs::write(&path, serde_json::to_string_pretty(&result)?)?;
+        println!("\nResults saved to: {path}");
     }
     Ok(())
 }
@@ -1557,6 +1826,12 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
             );
         }
         println!("\n  Manifest would be written to: {manifest_path}");
+        if let Some(path) = &args.hls_manifest {
+            println!("  HLS manifest would be written to: {path}");
+        }
+        if let Some(path) = &args.dash_manifest {
+            println!("  DASH manifest would be written to: {path}");
+        }
         return Ok(());
     }
 
@@ -1629,6 +1904,15 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
     }
 
     delivered.sort_by_key(|artifact| artifact.rung_index);
+    write_streaming_manifests(
+        args.hls_manifest.as_deref(),
+        args.dash_manifest.as_deref(),
+        args.manifest_base_url.as_deref(),
+        &jobs,
+        &delivered,
+        result.config.ladder_opts.audio_bitrate_kbps,
+    )?;
+
     let manifest = DeliveryManifest {
         analysis: args.analysis,
         source: (*source).clone(),
@@ -1642,6 +1926,49 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
     };
     std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
     println!("\nManifest saved to: {manifest_path}");
+
+    Ok(())
+}
+
+fn write_streaming_manifests(
+    hls_manifest: Option<&str>,
+    dash_manifest: Option<&str>,
+    manifest_base_url: Option<&str>,
+    jobs: &[DeliveryPlan],
+    delivered: &[DeliveryArtifact],
+    audio_bitrate_kbps: f64,
+) -> anyhow::Result<()> {
+    if hls_manifest.is_none() && dash_manifest.is_none() {
+        return Ok(());
+    }
+
+    let variants: Vec<viser_ladder::Variant> = delivered
+        .iter()
+        .zip(jobs.iter())
+        .map(|(artifact, job)| {
+            viser_ladder::Variant::from_rung(
+                &artifact.output,
+                job.rung.point.resolution,
+                &artifact.codec,
+                artifact.actual_bitrate,
+                artifact.duration_secs,
+            )
+        })
+        .collect();
+
+    let opts = viser_ladder::ManifestOpts {
+        audio_bitrate_kbps,
+        base_url: manifest_base_url.map(str::to_string),
+    };
+
+    if let Some(path) = hls_manifest {
+        viser_ladder::write_hls_master(path, &variants, &opts)?;
+        println!("HLS manifest saved to: {path}");
+    }
+    if let Some(path) = dash_manifest {
+        viser_ladder::write_dash_mpd(path, &variants, &opts)?;
+        println!("DASH manifest saved to: {path}");
+    }
 
     Ok(())
 }
@@ -1703,6 +2030,45 @@ async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs) -> anyhow::Result<()> {
         result.trial_count,
         result.duration.as_secs_f64()
     );
+
+    if args.blend_ladder && result.shots.len() > 1 {
+        let shot_hulls: Vec<viser_ladder::ShotHull> = result
+            .shots
+            .iter()
+            .map(|s| viser_ladder::ShotHull {
+                duration_secs: s.shot.duration.as_secs_f64(),
+                hull: s.hull.clone(),
+            })
+            .collect();
+        let ladder_opts = viser_ladder::Opts { num_rungs: args.blend_rungs, ..Default::default() };
+        let blended = viser_ladder::blend_shot_ladders(&shot_hulls, &ladder_opts);
+        let blended = viser_ladder::smooth_ladder(&blended, 8.0);
+        println!("\n  Blended ladder ({} rungs):", blended.rungs.len());
+        for r in &blended.rungs {
+            println!(
+                "    #{} {} {} CRF {} -> {:.0} kbps, {metric_label} {:.1}",
+                r.index + 1,
+                r.point.resolution.label(),
+                r.point.codec.as_str(),
+                r.point.crf,
+                r.point.bitrate,
+                r.point.vmaf
+            );
+        }
+        if let Some(ref charts_dir) = args.charts {
+            let chart_opts = viser_chart::Opts {
+                title: format!("{} (blended)", file_label(&args.input)),
+                ..Default::default()
+            };
+            let data = viser_chart::ladder_chart(&blended, chart_opts)?;
+            if !data.is_empty() {
+                std::fs::create_dir_all(charts_dir)?;
+                let path = format!("{charts_dir}/blended_ladder.png");
+                viser_chart::save_chart(&data, &path)?;
+                println!("  Chart: {path}");
+            }
+        }
+    }
 
     if args.target_bitrate > 0.0 && result.shots.len() > 1 {
         let assignments = viser_pershot::trellis_optimize(

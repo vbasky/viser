@@ -29,7 +29,7 @@ use std::fmt;
 
 /// Supported video codec.
 ///
-/// Software encoders (libx264, libx265, libsvtav1) are always available.
+/// Software encoders (libx264, libx265, libsvtav1, libvpx-vp9) are always available.
 /// Hardware encoder variants require FFmpeg built with the matching SDK
 /// and a GPU with the matching ASIC at runtime; availability is detected
 /// via `ffmpeg -encoders`.
@@ -44,6 +44,9 @@ pub enum Codec {
     /// AV1 via `libsvtav1` (SVT-AV1).
     #[serde(rename = "libsvtav1")]
     SvtAv1,
+    /// VP9 via `libvpx-vp9`.
+    #[serde(rename = "libvpx-vp9")]
+    Vp9,
 
     // ── Hardware encoders (H.264) ──
     /// NVIDIA NVENC H.264 (`h264_nvenc`).
@@ -98,7 +101,7 @@ pub enum Codec {
 /// Hardware encoder backend (GPU vendor / API).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncoderBackend {
-    /// Software encoder (libx264, libx265, libsvtav1).
+    /// Software encoder (libx264, libx265, libsvtav1, libvpx-vp9).
     Software,
     /// NVIDIA NVENC.
     Nvenc,
@@ -121,6 +124,8 @@ pub enum CodecFamily {
     H265,
     /// AV1.
     Av1,
+    /// VP9.
+    Vp9,
 }
 
 impl Codec {
@@ -130,6 +135,7 @@ impl Codec {
             Codec::X264 => "libx264",
             Codec::X265 => "libx265",
             Codec::SvtAv1 => "libsvtav1",
+            Codec::Vp9 => "libvpx-vp9",
             Codec::NvencH264 => "h264_nvenc",
             Codec::QsvH264 => "h264_qsv",
             Codec::VideoToolboxH264 => "h264_videotoolbox",
@@ -150,7 +156,7 @@ impl Codec {
     /// Hardware encoder backend for this codec.
     pub fn backend(&self) -> EncoderBackend {
         match self {
-            Codec::X264 | Codec::X265 | Codec::SvtAv1 => EncoderBackend::Software,
+            Codec::X264 | Codec::X265 | Codec::SvtAv1 | Codec::Vp9 => EncoderBackend::Software,
             Codec::NvencH264 | Codec::NvencH265 | Codec::NvencAv1 => EncoderBackend::Nvenc,
             Codec::QsvH264 | Codec::QsvH265 | Codec::QsvAv1 => EncoderBackend::Qsv,
             Codec::VideoToolboxH264 | Codec::VideoToolboxH265 => EncoderBackend::VideoToolbox,
@@ -177,6 +183,7 @@ impl Codec {
             Codec::SvtAv1 | Codec::NvencAv1 | Codec::QsvAv1 | Codec::VaapiAv1 | Codec::AmfAv1 => {
                 CodecFamily::Av1
             }
+            Codec::Vp9 => CodecFamily::Vp9,
         }
     }
 
@@ -205,6 +212,7 @@ impl std::str::FromStr for Codec {
             "libx264" | "x264" | "h264" => Ok(Codec::X264),
             "libx265" | "x265" | "h265" | "hevc" => Ok(Codec::X265),
             "libsvtav1" | "svtav1" | "av1" => Ok(Codec::SvtAv1),
+            "libvpx-vp9" | "vp9" | "libvpx" => Ok(Codec::Vp9),
             // NVENC
             "h264_nvenc" | "nvenc" | "nvenc_h264" => Ok(Codec::NvencH264),
             "hevc_nvenc" | "nvenc_h265" | "nvenc_hevc" => Ok(Codec::NvencH265),
@@ -328,6 +336,7 @@ mod tests {
         assert_eq!(Codec::X264.as_str(), "libx264");
         assert_eq!(Codec::X265.as_str(), "libx265");
         assert_eq!(Codec::SvtAv1.as_str(), "libsvtav1");
+        assert_eq!(Codec::Vp9.as_str(), "libvpx-vp9");
         assert_eq!(Codec::NvencH264.as_str(), "h264_nvenc");
         assert_eq!(Codec::QsvH264.as_str(), "h264_qsv");
         assert_eq!(Codec::VideoToolboxH264.as_str(), "h264_videotoolbox");
@@ -354,6 +363,8 @@ mod tests {
         assert_eq!("libsvtav1".parse::<Codec>().unwrap(), Codec::SvtAv1);
         assert_eq!("svtav1".parse::<Codec>().unwrap(), Codec::SvtAv1);
         assert_eq!("av1".parse::<Codec>().unwrap(), Codec::SvtAv1);
+        assert_eq!("libvpx-vp9".parse::<Codec>().unwrap(), Codec::Vp9);
+        assert_eq!("vp9".parse::<Codec>().unwrap(), Codec::Vp9);
         assert_eq!("h264_nvenc".parse::<Codec>().unwrap(), Codec::NvencH264);
         assert_eq!("nvenc".parse::<Codec>().unwrap(), Codec::NvencH264);
         assert_eq!("hevc_nvenc".parse::<Codec>().unwrap(), Codec::NvencH265);
@@ -384,6 +395,7 @@ mod tests {
         assert_eq!(Codec::X265.family(), CodecFamily::H265);
         assert_eq!(Codec::NvencH265.family(), CodecFamily::H265);
         assert_eq!(Codec::SvtAv1.family(), CodecFamily::Av1);
+        assert_eq!(Codec::Vp9.family(), CodecFamily::Vp9);
     }
 
     #[test]

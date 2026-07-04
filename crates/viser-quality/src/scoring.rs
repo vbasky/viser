@@ -15,6 +15,8 @@ pub enum HdrScoringMode {
     Tonemap,
     /// Keep native pixel format; may produce unreliable scores with SDR VMAF models.
     Native,
+    /// Score HDR in its native PQ/HLG transfer without tonemapping to BT.709.
+    HdrNative,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +24,7 @@ enum ScoringPrep {
     Passthrough,
     HighBitDepth { pix_fmt: String },
     TonemapSdr,
+    HdrNative { pix_fmt: String, transfer: String },
 }
 
 /// Resolved scoring preparation for a reference/distorted pair.
@@ -56,6 +59,17 @@ pub fn resolve_scoring_plan(
 
     let prep = match mode {
         HdrScoringMode::Tonemap if reference.is_hdr() => ScoringPrep::TonemapSdr,
+        HdrScoringMode::HdrNative if reference.is_hdr() => ScoringPrep::HdrNative {
+            pix_fmt: scoring_pix_fmt(reference),
+            transfer: hdr_transfer(reference),
+        },
+        HdrScoringMode::HdrNative => {
+            if ref_depth > 8 {
+                ScoringPrep::HighBitDepth { pix_fmt: scoring_pix_fmt(reference) }
+            } else {
+                ScoringPrep::Passthrough
+            }
+        }
         HdrScoringMode::Native => {
             if ref_depth > 8 {
                 ScoringPrep::HighBitDepth { pix_fmt: scoring_pix_fmt(reference) }
@@ -76,7 +90,7 @@ pub fn resolve_scoring_plan(
 
     let scoring_depth = match prep {
         ScoringPrep::TonemapSdr | ScoringPrep::Passthrough => 8,
-        ScoringPrep::HighBitDepth { .. } => ref_depth,
+        ScoringPrep::HighBitDepth { .. } | ScoringPrep::HdrNative { .. } => ref_depth,
     };
 
     ScoringPlan { prep, scoring_depth }
@@ -88,6 +102,39 @@ fn scoring_pix_fmt(stream: &StreamInfo) -> String {
     } else {
         yuv420p_for_depth(bit_depth(stream)).to_string()
     }
+}
+
+fn hdr_transfer(stream: &StreamInfo) -> String {
+    let t = stream.color_transfer.to_ascii_lowercase();
+    if t.contains("hlg") || t.contains("arib-std-b67") {
+        "arib-std-b67".into()
+    } else if t.contains("2084") || t.contains("pq") {
+        "smpte2084".into()
+    } else if !stream.color_transfer.is_empty() {
+        stream.color_transfer.clone()
+    } else {
+        "smpte2084".into()
+    }
+}
+
+/// Keeps HDR in its native transfer for PQ/HLG-domain scoring (no BT.709 tonemap).
+fn hdr_native_filter(stream: &StreamInfo, pix_fmt: &str) -> String {
+    let transfer = hdr_transfer(stream);
+    let primaries = if stream.color_primaries.is_empty() {
+        "bt2020".to_string()
+    } else {
+        stream.color_primaries.clone()
+    };
+    let matrix = if stream.color_space.is_empty() {
+        "bt2020nc".to_string()
+    } else {
+        stream.color_space.clone()
+    };
+    format!(
+        "zscale=transfer={transfer}:matrix={matrix}:primaries={primaries},\
+         zscale=transfer=linear:npl=100,format=gbrpf32le,\
+         zscale=transfer={transfer}:matrix={matrix}:primaries={primaries},format={pix_fmt}"
+    )
 }
 
 fn tonemap_to_sdr_filter(stream: &StreamInfo) -> String {
@@ -154,6 +201,9 @@ fn prep_filters(stream: &StreamInfo, plan: &ScoringPlan, scale: Option<(i32, i32
         ScoringPrep::Passthrough => {}
         ScoringPrep::HighBitDepth { pix_fmt } => parts.push(format!("format={pix_fmt}")),
         ScoringPrep::TonemapSdr => parts.push(tonemap_to_sdr_filter(stream)),
+        ScoringPrep::HdrNative { pix_fmt, transfer: _ } => {
+            parts.push(hdr_native_filter(stream, pix_fmt));
+        }
     }
     if parts.is_empty() { "null".to_string() } else { parts.join(",") }
 }
@@ -222,6 +272,23 @@ mod tests {
             "log_fmt=json",
         );
         assert!(graph.contains("format=yuv420p10le"));
+    }
+
+    #[test]
+    fn test_hdr_native_preserves_pq_transfer() {
+        let reference = stream("yuv420p10le", "smpte2084", "bt2020");
+        let distorted = stream("yuv420p10le", "smpte2084", "bt2020");
+        let plan = resolve_scoring_plan(&reference, &distorted, HdrScoringMode::HdrNative);
+        assert_eq!(plan.scoring_depth, 10);
+        let (graph, _) = build_compare_filtergraph(
+            &reference,
+            &distorted,
+            HdrScoringMode::HdrNative,
+            1920,
+            1080,
+        );
+        assert!(graph.contains("transfer=smpte2084"));
+        assert!(!graph.contains("tonemap"));
     }
 
     #[test]
