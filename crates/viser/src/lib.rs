@@ -10,10 +10,10 @@
 //!
 //! ```toml
 //! # everything (default)
-//! viser = "0.10"
+//! viser = "0.11"
 //!
 //! # only what you need
-//! viser = { version = "0.10", default-features = false, features = ["quality", "hull"] }
+//! viser = { version = "0.11", default-features = false, features = ["quality", "hull"] }
 //! ```
 //!
 //! The command-line tool lives in the separate `viser-cli` crate, which
