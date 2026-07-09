@@ -17,6 +17,7 @@ use viser_ffmpeg::{check_ffmpeg, check_ffprobe, init_hw_encoders, validate_vmaf_
 #[derive(Parser)]
 #[command(
     name = "viser",
+    version,
     about = "",
     subcommand_required = false,
     before_help = "  📈 viser\n\n  🎬 video encoding optimizer\n  per-title analysis, per-shot refinement, quality metrics"
