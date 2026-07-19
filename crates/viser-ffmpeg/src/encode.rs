@@ -208,6 +208,135 @@ pub async fn extract(input: &str, output: &str, start: f64, duration: f64) -> an
     Ok(())
 }
 
+/// Splits a source duration into a list of `(start_seconds, chunk_duration_seconds)` tuples.
+///
+/// Each chunk is `chunk_seconds` long except the last, which is shortened to fit
+/// the remaining duration. Returns an empty vec when `duration` or `chunk_seconds`
+/// is non-positive.
+pub fn chunk_plan(duration: f64, chunk_seconds: f64) -> Vec<(f64, f64)> {
+    if duration <= 0.0 || chunk_seconds <= 0.0 {
+        return vec![];
+    }
+    let mut start = 0.0;
+    let mut chunks = Vec::new();
+    while start < duration {
+        let remaining = duration - start;
+        let cd = remaining.min(chunk_seconds);
+        chunks.push((start, cd));
+        start += cd;
+    }
+    chunks
+}
+
+/// Encode a source in chunks and concatenate the results.
+///
+/// Splits the source into `chunk_seconds`-long segments, encodes each segment
+/// independently using `job` as a template (overriding its `input` with the
+/// original source and injecting `-ss`/`-t` for each chunk), then concatenates
+/// the encoded chunks into `job.output`.
+///
+/// `parallel` controls the maximum number of concurrent chunk encodes.
+pub async fn chunked_encode(
+    job: EncodeJob,
+    chunk_seconds: f64,
+    parallel: usize,
+) -> anyhow::Result<EncodeResult> {
+    let probe_result = probe(&job.input).await?;
+    let duration = probe_result.format.duration;
+    if duration <= 0.0 {
+        anyhow::bail!("could not determine source duration for chunked encoding");
+    }
+    let chunks = chunk_plan(duration, chunk_seconds);
+    if chunks.is_empty() {
+        anyhow::bail!(
+            "no chunks were planned (duration={duration}, chunk_seconds={chunk_seconds})"
+        );
+    }
+    if chunks.len() == 1 {
+        // Single chunk: no need to split, just encode directly.
+        return encode(job, None).await;
+    }
+
+    let tmp_dir = tempfile::Builder::new().prefix("viser-chunked-").tempdir()?;
+    let parallel = parallel.max(1);
+
+    // Pre-allocate the output vector so we can write results in order.
+    let outputs = std::sync::Arc::new(std::sync::Mutex::new(vec![None; chunks.len()]));
+    let errors = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    // Chunk encodes are parallelised via a semaphore.
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(parallel));
+    let mut handles = Vec::with_capacity(chunks.len());
+
+    for (index, (start, duration)) in chunks.iter().copied().enumerate() {
+        let permit = sem.clone().acquire_owned().await?;
+        let chunk_output = tmp_dir.path().join(format!("chunk_{index:04}.mp4"));
+        let output_path = chunk_output.to_string_lossy().into_owned();
+        let chunk_job = EncodeJob {
+            input: job.input.clone(),
+            output: output_path.clone(),
+            extra_args: vec![
+                "-ss".into(),
+                format!("{start:.6}"),
+                "-t".into(),
+                format!("{duration:.6}"),
+            ],
+            ..job.clone()
+        };
+
+        let outputs_clone = outputs.clone();
+        let errors_clone = errors.clone();
+
+        handles.push(tokio::spawn(async move {
+            let _permit = permit;
+            match encode(chunk_job, None).await {
+                Ok(_) => {
+                    outputs_clone.lock().unwrap()[index] = Some(output_path);
+                }
+                Err(e) => {
+                    errors_clone.lock().unwrap().push((index, e));
+                }
+            }
+        }));
+    }
+
+    // Drain all handles.
+    for h in handles {
+        let _ = h.await;
+    }
+
+    // Check for errors (drop the guard before any await).
+    {
+        let errs = errors.lock().unwrap();
+        if !errs.is_empty() {
+            let msg =
+                errs.iter().map(|(i, e)| format!("chunk {i}: {e}")).collect::<Vec<_>>().join("; ");
+            anyhow::bail!("chunked encode failed: {msg}");
+        }
+    }
+
+    // Collect outputs in order, checking all chunks succeeded.
+    let outputs: Vec<String> = {
+        let guard = outputs.lock().unwrap();
+        guard
+            .iter()
+            .enumerate()
+            .map(|(i, opt)| {
+                opt.clone().ok_or_else(|| anyhow::anyhow!("chunk {i} produced no output"))
+            })
+            .collect::<anyhow::Result<_>>()?
+    };
+
+    let started = std::time::Instant::now();
+    concat(&outputs, &job.output).await?;
+
+    let meta = std::fs::metadata(&job.output)?;
+    let output_probe = probe(&job.output).await?;
+    let bitrate = output_probe.format.bit_rate as f64 / 1000.0;
+
+    Ok(EncodeResult { job, bitrate, file_size: meta.len(), duration: started.elapsed() })
+}
+
 /// Concatenates multiple encoded chunks into a single output without re-encoding.
 pub async fn concat(inputs: &[String], output: &str) -> anyhow::Result<()> {
     if inputs.is_empty() {
@@ -351,8 +480,9 @@ fn vaapi_device() -> String {
 ///
 /// Software encoders only scale (lanczos) when a target resolution is set.
 /// VAAPI encoders additionally need the frames converted and uploaded to GPU
-/// surfaces (`format=nv12,hwupload`), since the encoder consumes VAAPI surfaces
-/// — without this the encode fails with a format-conversion error.
+/// surfaces (`format=p010,hwupload` for 10-bit HDR content, `format=nv12,hwupload`
+/// for 8-bit SDR), since the encoder consumes VAAPI surfaces — without this the
+/// encode fails with a format-conversion error.
 fn build_filter_chain(job: &EncodeJob) -> Option<String> {
     let scale = job
         .resolution
@@ -360,15 +490,25 @@ fn build_filter_chain(job: &EncodeJob) -> Option<String> {
         .map(|res| format!("scale={}:{}:flags=lanczos", res.width, res.height));
 
     if job.codec.backend() == EncoderBackend::Vaapi {
-        // Software-scale (if requested) in system memory, then upload to a VAAPI
-        // surface for the encoder.
+        // Choose the VAAPI surface format: p010 for 10-bit HDR, nv12 for SDR.
+        let va_fmt = vaapi_surface_format(job);
         Some(match scale {
-            Some(s) => format!("{s},format=nv12,hwupload"),
-            None => "format=nv12,hwupload".to_string(),
+            Some(s) => format!("{s},format={va_fmt},hwupload"),
+            None => format!("format={va_fmt},hwupload"),
         })
     } else {
         scale
     }
+}
+
+/// Returns the VAAPI surface pixel format for the given job.
+///
+/// Uses `p010` when the source is high-bit-depth or HDR, `nv12` otherwise.
+fn vaapi_surface_format(job: &EncodeJob) -> &'static str {
+    job.source_format
+        .as_ref()
+        .filter(|fmt| fmt.is_high_bit_depth() || fmt.is_hdr)
+        .map_or("nv12", |_| "p010")
 }
 
 fn build_sw_args(
@@ -1114,6 +1254,88 @@ mod tests {
     }
 
     // ── Null output path ──
+    // ── Chunk plan ──
+    #[test]
+    fn test_chunk_plan_single_chunk() {
+        let chunks = chunk_plan(30.0, 60.0);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], (0.0, 30.0));
+    }
+
+    #[test]
+    fn test_chunk_plan_exact_multiple() {
+        let chunks = chunk_plan(60.0, 30.0);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], (0.0, 30.0));
+        assert_eq!(chunks[1], (30.0, 30.0));
+    }
+
+    #[test]
+    fn test_chunk_plan_uneven_final() {
+        let chunks = chunk_plan(100.0, 30.0);
+        assert_eq!(chunks.len(), 4);
+        assert_eq!(chunks[0], (0.0, 30.0));
+        assert_eq!(chunks[1], (30.0, 30.0));
+        assert_eq!(chunks[2], (60.0, 30.0));
+        assert_eq!(chunks[3], (90.0, 10.0));
+    }
+
+    #[test]
+    fn test_chunk_plan_negative_duration() {
+        assert!(chunk_plan(-1.0, 30.0).is_empty());
+    }
+
+    #[test]
+    fn test_chunk_plan_zero_chunk_seconds() {
+        assert!(chunk_plan(100.0, 0.0).is_empty());
+    }
+
+    #[test]
+    fn test_chunk_plan_very_small_chunks() {
+        let chunks = chunk_plan(5.0, 2.0);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0], (0.0, 2.0));
+        assert_eq!(chunks[1], (2.0, 2.0));
+        assert_eq!(chunks[2], (4.0, 1.0));
+    }
+
+    // ── chunked_encode with test double ──
+    // Tests the error paths and plan logic; full end-to-end tests with real
+    // FFmpeg are in the FATE suite.
+
+    #[tokio::test]
+    async fn test_chunked_encode_fails_on_unknown_input() {
+        let job = EncodeJob {
+            input: "/nonexistent/input.mp4".into(),
+            output: "out.mp4".into(),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let result = chunked_encode(job, 30.0, 2).await;
+        assert!(result.is_err(), "expected error for non-existent input");
+    }
+
+    #[tokio::test]
+    async fn test_chunked_encode_single_chunk_delegates_to_encode() {
+        // When the source is shorter than chunk_seconds, chunked_encode should
+        // detect one chunk and delegate to encode(), which will fail on a
+        // non-existent file in the same way.
+        let job = EncodeJob {
+            input: "/nonexistent/input.mp4".into(),
+            output: "out.mp4".into(),
+            resolution: None,
+            codec: Codec::X264,
+            crf: 23,
+            rate_control: RateControlMode::Crf,
+            ..sample_job(RateControlMode::Crf)
+        };
+        let result = chunked_encode(job, 999999.0, 2).await;
+        // Should fail because the file doesn't exist (encode will fail),
+        // not because of a chunking error.
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("ffmpeg") || err.contains("probe") || err.contains("encode"));
+    }
+
     #[test]
     fn test_null_output_path_is_platform_appropriate() {
         let null = null_output_path();
@@ -1547,6 +1769,68 @@ mod tests {
 
     #[test]
     fn test_vaapi_hwupload_present_without_resolution() {
+        let job = EncodeJob {
+            codec: Codec::VaapiH264,
+            resolution: None,
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("missing -vf");
+        assert_eq!(args[vf_idx + 1], "format=nv12,hwupload");
+    }
+
+    #[test]
+    fn test_vaapi_hdr_uses_p010_surface_format() {
+        let job = EncodeJob {
+            codec: Codec::VaapiH265,
+            resolution: None,
+            source_format: Some(hdr10_svtav1_format()),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("missing -vf");
+        let vf = &args[vf_idx + 1];
+        assert!(vf.contains("format=p010,hwupload"), "expected p010 format for HDR VAAPI: {vf}");
+    }
+
+    #[test]
+    fn test_vaapi_10bit_sdr_uses_p010_surface_format() {
+        let job = EncodeJob {
+            codec: Codec::VaapiH265,
+            resolution: None,
+            source_format: Some(SourceFormat {
+                pix_fmt: "yuv420p10le".into(),
+                bit_depth: 10,
+                color_primaries: "bt709".into(),
+                color_transfer: "bt709".into(),
+                color_space: "bt709".into(),
+                is_hdr: false,
+                hdr10: None,
+            }),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("missing -vf");
+        let vf = &args[vf_idx + 1];
+        assert!(vf.contains("format=p010,hwupload"), "expected p010 for 10-bit VAAPI: {vf}");
+    }
+
+    #[test]
+    fn test_vaapi_hdr_with_resolution_uses_p010() {
+        let job = EncodeJob {
+            codec: Codec::VaapiH265,
+            source_format: Some(hdr10_svtav1_format()),
+            ..sample_job(RateControlMode::Crf)
+        };
+        let args = build_encode_args(&job, EncodePass::Single).unwrap();
+        let vf_idx = args.iter().position(|a| a == "-vf").expect("missing -vf");
+        let vf = &args[vf_idx + 1];
+        assert!(vf.contains("format=p010,hwupload"), "expected p010 in HDR VAAPI: {vf}");
+        assert!(vf.contains("scale="), "expected scale in HDR VAAPI: {vf}");
+    }
+
+    #[test]
+    fn test_vaapi_sdr_uses_nv12_surface_format() {
         let job = EncodeJob {
             codec: Codec::VaapiH264,
             resolution: None,

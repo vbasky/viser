@@ -121,6 +121,13 @@ struct EncodeArgs {
     /// Omit for software decode.
     #[arg(long)]
     hwaccel: Option<String>,
+    /// Encode in chunks of this many seconds (for long-form content).
+    /// Chunks are encoded independently and concatenated.
+    #[arg(long)]
+    chunk_seconds: Option<f64>,
+    /// Max parallel chunk encodes (only used with --chunk-seconds).
+    #[arg(long, default_value_t = 1)]
+    parallel: usize,
 }
 
 // ── Inspect ──
@@ -435,6 +442,28 @@ struct PerTitleAnalyzeArgs {
     /// How HDR/high bit-depth sources are prepared before quality scoring
     #[arg(long, value_enum, default_value = "auto")]
     hdr_scoring: HdrScoringArg,
+    /// ABR target bitrates (kbps, comma-separated). When set, the ladder is built
+    /// by matching these bitrate targets instead of evenly-spaced VMAF targets.
+    #[arg(long, value_delimiter = ',')]
+    abr_bitrates: Option<Vec<f64>>,
+    /// Generate logarithmically-spaced ABR bitrate targets between --min-bitrate
+    /// and --max-bitrate. Requires --rungs to be set and --abr-bitrates to be empty.
+    /// The generated targets are used as ABR bitrate targets for ladder selection.
+    #[arg(long)]
+    abr_logarithmic: bool,
+    /// Storage cost per GB per month for cost-aware optimization (e.g., 0.023).
+    #[arg(long, default_value_t = 0.023)]
+    storage_cost: f64,
+    /// CDN delivery cost per GB for cost-aware optimization (e.g., 0.08).
+    #[arg(long, default_value_t = 0.08)]
+    cdn_cost: f64,
+    /// Monthly viewing hours for cost-aware optimization.
+    #[arg(long, default_value_t = 0.0)]
+    viewing_hours: f64,
+    /// Maximum monthly storage + CDN cost in dollars. When set, the ladder is
+    /// pruned to stay within this budget.
+    #[arg(long, default_value_t = 0.0)]
+    max_monthly_cost: f64,
 }
 
 #[derive(Parser)]
@@ -463,6 +492,11 @@ struct PerTitlePredictArgs {
     /// Maximum bitrate (kbps)
     #[arg(long, default_value_t = 8000.0)]
     max_bitrate: f64,
+    /// Path to an ONNX model for ML-based R-D point prediction (requires
+    /// viser-predict built with the `onnx` feature). When set, the heuristic
+    /// `predict_point` is replaced by the model's inference.
+    #[arg(long)]
+    predict_model: Option<String>,
 }
 
 #[derive(Parser)]
@@ -882,17 +916,23 @@ async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
     }
     .with_source_video(source_video);
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<viser_ffmpeg::Progress>(10);
-    tokio::spawn(async move {
-        while let Some(p) = rx.recv().await {
-            eprint!(
-                "\rFrame: {}  FPS: {:.1}  Bitrate: {:.0} kbps  Speed: {:.1}x",
-                p.frame, p.fps, p.bitrate, p.speed
-            );
+    let result = if let Some(chunk_seconds) = args.chunk_seconds {
+        if chunk_seconds <= 0.0 {
+            anyhow::bail!("--chunk-seconds must be positive");
         }
-    });
-
-    let result = viser_ffmpeg::encode(job, Some(tx)).await?;
+        viser_ffmpeg::chunked_encode(job, chunk_seconds, args.parallel).await?
+    } else {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<viser_ffmpeg::Progress>(10);
+        tokio::spawn(async move {
+            while let Some(p) = rx.recv().await {
+                eprint!(
+                    "\rFrame: {}  FPS: {:.1}  Bitrate: {:.0} kbps  Speed: {:.1}x",
+                    p.frame, p.fps, p.bitrate, p.speed
+                );
+            }
+        });
+        viser_ffmpeg::encode(job, Some(tx)).await?
+    };
     eprintln!();
     println!("\nEncode complete:");
     println!("  Bitrate:   {:.0} kbps", result.bitrate);
@@ -1468,25 +1508,33 @@ async fn cmd_pertitle_predict(args: PerTitlePredictArgs) -> anyhow::Result<()> {
             parallel: 1,
             rate_control: viser_ffmpeg::RateControlMode::Crf,
         },
-        ladder_opts: viser_ladder::Opts {
-            num_rungs: args.rungs,
-            min_bitrate: args.min_bitrate,
-            max_bitrate: args.max_bitrate,
-            min_vmaf: 40.0,
-            max_vmaf: 97.0,
-            audio_bitrate_kbps: 0.0,
-        },
+        ladder_opts: build_ladder_opts(
+            args.rungs,
+            args.min_bitrate,
+            args.max_bitrate,
+            None,
+            false,
+            0.023,
+            0.08,
+            0.0,
+            0.0,
+        ),
         checkpoint_path: String::new(),
         vmaf_model: String::new(),
         opt_metric: viser_quality::Metric::Vmaf,
         allow_hdr: false,
         hdr_scoring: viser_quality::HdrScoringMode::Auto,
+        extra_encoder_args: vec![],
     };
 
+    let model_path = args.predict_model.unwrap_or_default();
+    if !model_path.is_empty() {
+        println!("  ONNX model: {model_path}");
+    }
     println!("Viser Per-Title Prediction (feature-based, no encodes)");
     println!("  Source: {}", args.input);
 
-    let result = viser_predict::predict(&args.input, cfg).await?;
+    let result = viser_predict::predict(&args.input, cfg, &model_path).await?;
 
     println!(
         "  Complexity: {:.1} (spatial {:.3}, temporal {:.1})",
@@ -1529,6 +1577,7 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
         _ => viser_ffmpeg::RateControlMode::Crf,
     };
 
+    let mut is_screen_content = false;
     let mut crf_values = args.crf_values.clone();
     let mut preset = args.preset.clone();
     if let Ok(profile) =
@@ -1537,10 +1586,18 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
         let detection = viser_complexity::detect_screen_content(&profile);
         let hints = viser_complexity::encoding_hints(&detection);
         if detection.content_type == viser_complexity::ContentType::Screen {
+            is_screen_content = true;
             println!("  Screen content: {} — adjusting encoding strategy", hints.reason);
             viser_complexity::apply_encoding_hints(&mut crf_values, &mut preset, &hints);
         }
     }
+
+    // Pre-compute per-codec screen content encoder args for the trial matrix.
+    let extra_encoder_args: Vec<String> = if is_screen_content {
+        codecs.iter().flat_map(viser_complexity::screen_content_encoder_args).collect()
+    } else {
+        vec![]
+    };
 
     let cfg = viser_pertitle::Config {
         encoding: viser_encoding::Config {
@@ -1552,19 +1609,23 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
             parallel: args.parallel,
             rate_control,
         },
-        ladder_opts: viser_ladder::Opts {
-            num_rungs: args.rungs,
-            min_bitrate: args.min_bitrate,
-            max_bitrate: args.max_bitrate,
-            min_vmaf: 40.0,
-            max_vmaf: 97.0,
-            audio_bitrate_kbps: 0.0,
-        },
+        ladder_opts: build_ladder_opts(
+            args.rungs,
+            args.min_bitrate,
+            args.max_bitrate,
+            args.abr_bitrates.clone(),
+            args.abr_logarithmic,
+            args.storage_cost,
+            args.cdn_cost,
+            args.viewing_hours,
+            args.max_monthly_cost,
+        ),
         checkpoint_path: String::new(),
         vmaf_model: String::new(),
         opt_metric: args.metric.into(),
         allow_hdr: args.allow_hdr,
         hdr_scoring: args.hdr_scoring.into(),
+        extra_encoder_args,
     };
 
     let total = resolutions.len() * codecs.len() * crf_values.len();
@@ -2000,6 +2061,19 @@ async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs) -> anyhow::Result<()> {
     let resolutions = parse_resolutions(&args.resolutions)?;
     let codecs = parse_codecs(&args.codecs)?;
 
+    let extra_encoder_args = if let Ok(profile) =
+        viser_complexity::analyze(&args.input, viser_complexity::AnalyzeOpts::default()).await
+    {
+        let detection = viser_complexity::detect_screen_content(&profile);
+        if detection.content_type == viser_complexity::ContentType::Screen {
+            codecs.iter().flat_map(viser_complexity::screen_content_encoder_args).collect()
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
     let cfg = viser_pershot::Config {
         encoding: viser_encoding::Config {
             resolutions,
@@ -2019,6 +2093,7 @@ async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs) -> anyhow::Result<()> {
         opt_metric: args.metric.into(),
         allow_hdr: args.allow_hdr,
         hdr_scoring: args.hdr_scoring.into(),
+        extra_encoder_args,
     };
 
     let metric_label = args.metric.label();
@@ -2296,7 +2371,7 @@ async fn run_chunked_delivery_job(
     chunk_seconds: f64,
 ) -> anyhow::Result<viser_ffmpeg::EncodeResult> {
     let tmp_dir = tempfile::Builder::new().prefix("viser-delivery-").tempdir()?;
-    let chunks = build_chunks(opts.source_duration, chunk_seconds);
+    let chunks = viser_ffmpeg::chunk_plan(opts.source_duration, chunk_seconds);
     let mut outputs = Vec::with_capacity(chunks.len());
     let started = std::time::Instant::now();
 
@@ -2391,24 +2466,49 @@ fn mode_label(mode: viser_ffmpeg::RateControlMode) -> &'static str {
     }
 }
 
-fn build_chunks(duration: f64, chunk_seconds: f64) -> Vec<(f64, f64)> {
-    if duration <= 0.0 || chunk_seconds <= 0.0 {
-        return vec![];
-    }
+/// Build ladder `Opts` from CLI arguments, handling ABR bitrate targets and
+/// cost-aware optimization parameters.
+#[allow(clippy::too_many_arguments)]
+fn build_ladder_opts(
+    num_rungs: i32,
+    min_bitrate: f64,
+    max_bitrate: f64,
+    abr_bitrates: Option<Vec<f64>>,
+    abr_logarithmic: bool,
+    storage_cost: f64,
+    cdn_cost: f64,
+    viewing_hours: f64,
+    max_monthly_cost: f64,
+) -> viser_ladder::Opts {
+    let abr_targets = if abr_logarithmic {
+        Some(viser_ladder::logarithmic_bitrates(min_bitrate, max_bitrate, num_rungs as usize))
+    } else if let Some(bitrates) = abr_bitrates
+        && !bitrates.is_empty()
+    {
+        Some(bitrates)
+    } else {
+        None
+    };
 
-    let mut start = 0.0;
-    let mut chunks = Vec::new();
-    while start < duration {
-        let remaining = duration - start;
-        let chunk_duration = remaining.min(chunk_seconds);
-        chunks.push((start, chunk_duration));
-        start += chunk_duration;
+    viser_ladder::Opts {
+        num_rungs,
+        min_bitrate,
+        max_bitrate,
+        min_vmaf: 40.0,
+        max_vmaf: 97.0,
+        audio_bitrate_kbps: 0.0,
+        abr: viser_ladder::AbrOpts { target_bitrates: abr_targets },
+        cost: viser_ladder::CostOpts {
+            storage_cost_per_gb_month: storage_cost,
+            cdn_cost_per_gb: cdn_cost,
+            viewing_hours_per_month: viewing_hours,
+            max_monthly_cost,
+        },
     }
-    chunks
 }
 
 fn chunk_count(duration: f64, chunk_seconds: Option<f64>) -> usize {
-    chunk_seconds.map(|seconds| build_chunks(duration, seconds).len()).unwrap_or(1)
+    chunk_seconds.map(|seconds| viser_ffmpeg::chunk_plan(duration, seconds).len()).unwrap_or(1)
 }
 
 async fn cmd_inspect_blackframes(file: &str, min_duration: f64) -> anyhow::Result<()> {
@@ -2518,8 +2618,11 @@ mod tests {
     }
 
     #[test]
-    fn test_build_chunks_splits_remainder() {
-        assert_eq!(build_chunks(25.0, 10.0), vec![(0.0, 10.0), (10.0, 10.0), (20.0, 5.0)]);
+    fn test_chunk_plan_splits_remainder() {
+        assert_eq!(
+            viser_ffmpeg::chunk_plan(25.0, 10.0),
+            vec![(0.0, 10.0), (10.0, 10.0), (20.0, 5.0)]
+        );
     }
 
     #[test]

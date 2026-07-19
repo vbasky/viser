@@ -1,6 +1,6 @@
 //! Bit depth, pixel format, and HDR color metadata helpers.
 
-use crate::{Codec, Hdr10Metadata, StreamInfo};
+use crate::{Codec, CodecFamily, EncoderBackend, Hdr10Metadata, StreamInfo};
 
 /// Snapshot of source video color characteristics for encode preservation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -99,14 +99,54 @@ pub fn psnr_peak(depth: u8) -> f64 {
     }
 }
 
-/// Returns whether a software codec can encode at the requested bit depth.
+/// Returns whether a codec can encode at the requested bit depth.
+///
+/// Hardware encoders (NVENC, QSV, AMF, VideoToolbox) generally support 10-bit
+/// for HEVC and AV1, but not for H.264 AVC. VAAPI and VP9 have their own
+/// constraints. Returns `false` for unknown or unsupported combinations.
 pub fn codec_supports_bit_depth(codec: Codec, depth: u8) -> bool {
     if depth <= 8 {
         return true;
     }
     match codec {
+        // Software
         Codec::X264 | Codec::X265 | Codec::SvtAv1 | Codec::Vp9 => true,
-        _ => false,
+        // Hardware encoders: HEVC and AV1 backends support 10-bit; H.264 backends do not.
+        Codec::NvencH265 | Codec::QsvH265 | Codec::AmfH265 | Codec::VideoToolboxH265 => true,
+        Codec::NvencAv1 | Codec::QsvAv1 | Codec::AmfAv1 => true,
+        Codec::VaapiH265 | Codec::VaapiAv1 => true,
+        // H.264 HW and VideoToolbox AV1 are 8-bit only.
+        Codec::NvencH264
+        | Codec::QsvH264
+        | Codec::AmfH264
+        | Codec::VideoToolboxH264
+        | Codec::VaapiH264 => false,
+    }
+}
+
+/// Returns the hardware-appropriate high-bit-depth pixel format for a given
+/// codec and source format, or `None` when the backend does not support high
+/// bit depth (or the format is handled elsewhere, e.g. via VAAPI hwupload).
+fn hw_pix_fmt(format: &SourceFormat, codec: Codec) -> Option<String> {
+    if !format.is_high_bit_depth() {
+        return None;
+    }
+    // Hardware encoders typically use the 10-bit 4:2:0 p010le format.
+    // NVENC, QSV, AMF, and VideoToolbox all accept this for HEVC/AV1.
+    // We accept yuv420p10le sources and map to p010le where possible.
+    match codec.backend() {
+        EncoderBackend::Nvenc
+        | EncoderBackend::Qsv
+        | EncoderBackend::Amf
+        | EncoderBackend::VideoToolbox => {
+            if format.bit_depth == 10 {
+                Some("p010le".into())
+            } else {
+                None
+            }
+        }
+        EncoderBackend::Vaapi => None, // pix_fmt is set via hwupload filter
+        EncoderBackend::Software => None,
     }
 }
 
@@ -114,16 +154,21 @@ pub fn codec_supports_bit_depth(codec: Codec, depth: u8) -> bool {
 pub fn encode_color_args(codec: Codec, format: &SourceFormat) -> Vec<String> {
     let mut args = Vec::new();
 
-    if format.is_high_bit_depth()
-        && codec.is_software()
-        && codec_supports_bit_depth(codec, format.bit_depth)
-    {
-        args.extend(["-pix_fmt".into(), format.pix_fmt.clone()]);
-        match codec {
-            Codec::X264 => args.extend(["-profile:v".into(), "high10".into()]),
-            Codec::X265 => args.extend(["-x265-params".into(), x265_params(format)]),
-            Codec::SvtAv1 => {}
-            _ => {}
+    if format.is_high_bit_depth() && codec_supports_bit_depth(codec, format.bit_depth) {
+        if codec.is_software() {
+            args.extend(["-pix_fmt".into(), format.pix_fmt.clone()]);
+            match codec {
+                Codec::X264 => args.extend(["-profile:v".into(), "high10".into()]),
+                Codec::X265 => args.extend(["-x265-params".into(), x265_params(format)]),
+                Codec::SvtAv1 => {}
+                _ => {}
+            }
+        } else if let Some(pix) = hw_pix_fmt(format, codec) {
+            args.extend(["-pix_fmt".into(), pix]);
+            // Hardware HEVC and AV1 encoders need an explicit main10 profile.
+            if matches!(codec.family(), CodecFamily::H265 | CodecFamily::Av1) {
+                args.extend(["-profile:v".into(), "main10".into()]);
+            }
         }
     }
 
@@ -140,11 +185,49 @@ pub fn encode_color_args(codec: Codec, format: &SourceFormat) -> Vec<String> {
                     args.extend(["-svtav1-params".into(), params]);
                 }
             }
-            _ => {}
+            _ => add_hdr_bsf(&mut args, codec.family(), format),
         }
     }
 
     args
+}
+
+/// Injects HDR10 static metadata (mastering-display + max-cll) via a
+/// codec-family bitstream filter. This works with ANY encoder (including
+/// hardware) because it operates on the encoded bitstream after encoding,
+/// before muxing.
+///
+/// Supported codec families:
+/// - `H265` → `hevc_metadata` bitstream filter
+/// - `H264` → `h264_metadata` bitstream filter
+/// - `Av1` / `Vp9` → not yet supported (falls back to `-color_*` tags only)
+fn add_hdr_bsf(args: &mut Vec<String>, family: CodecFamily, format: &SourceFormat) {
+    let Some(hdr10) = &format.hdr10 else {
+        return;
+    };
+    if hdr10.is_empty() {
+        return;
+    }
+
+    let bsf_name = match family {
+        CodecFamily::H265 => "hevc_metadata",
+        CodecFamily::H264 => "h264_metadata",
+        // av1_metadata does not support mastering_display/max_cll options;
+        // VP9 has no equivalent bitstream filter.
+        _ => return,
+    };
+
+    let mut params = Vec::new();
+    if let Some(display) = &hdr10.mastering_display {
+        params.push(format!("mastering_display=\"{}\"", display.to_x265_string()));
+    }
+    if let Some(max_cll) = hdr10.max_cll {
+        let max_fall = hdr10.max_fall.unwrap_or(0);
+        params.push(format!("max_cll={max_cll},{max_fall}"));
+    }
+    if !params.is_empty() {
+        args.extend(["-bsf".into(), format!("{}={}", bsf_name, params.join(":"))]);
+    }
 }
 
 fn append_color_metadata(args: &mut Vec<String>, format: &SourceFormat) {
@@ -375,5 +458,294 @@ mod tests {
         let args = encode_color_args(Codec::X265, &format);
         assert!(!args.iter().any(|a| a.contains("master-display")));
         assert!(!args.iter().any(|a| a.contains("max-cll")));
+    }
+
+    // ── hw_pix_fmt ──
+
+    #[test]
+    fn test_hw_pix_fmt_nvenc_10bit() {
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        let format = SourceFormat::from_stream(&stream);
+        assert_eq!(hw_pix_fmt(&format, Codec::NvencH265), Some("p010le".into()));
+        assert_eq!(hw_pix_fmt(&format, Codec::NvencAv1), Some("p010le".into()));
+    }
+
+    #[test]
+    fn test_hw_pix_fmt_8bit_shows_none() {
+        let format = SourceFormat::from_stream(&base_stream());
+        assert_eq!(hw_pix_fmt(&format, Codec::NvencH265), None);
+        assert_eq!(hw_pix_fmt(&format, Codec::QsvH265), None);
+        assert_eq!(hw_pix_fmt(&format, Codec::VaapiH265), None);
+    }
+
+    #[test]
+    fn test_hw_pix_fmt_vaapi_returns_none() {
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        let format = SourceFormat::from_stream(&stream);
+        assert_eq!(hw_pix_fmt(&format, Codec::VaapiH265), None);
+    }
+
+    #[test]
+    fn test_hw_pix_fmt_amf_10bit() {
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        let format = SourceFormat::from_stream(&stream);
+        assert_eq!(hw_pix_fmt(&format, Codec::AmfH265), Some("p010le".into()));
+    }
+
+    #[test]
+    fn test_hw_pix_fmt_qsv_10bit() {
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        let format = SourceFormat::from_stream(&stream);
+        assert_eq!(hw_pix_fmt(&format, Codec::QsvH265), Some("p010le".into()));
+    }
+
+    #[test]
+    fn test_hw_pix_fmt_videotoolbox_10bit() {
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        let format = SourceFormat::from_stream(&stream);
+        assert_eq!(hw_pix_fmt(&format, Codec::VideoToolboxH265), Some("p010le".into()));
+    }
+
+    // ── HW encoder high bit depth in encode_color_args ──
+
+    #[test]
+    fn test_encode_color_args_nvenc_high_bit_depth_pix_fmt() {
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        let format = SourceFormat::from_stream(&stream);
+        let args = encode_color_args(Codec::NvencH265, &format);
+        assert!(
+            args.windows(2).any(|w| w[0] == "-pix_fmt" && w[1] == "p010le"),
+            "expected -pix_fmt p010le for NVENC 10-bit, got {args:?}"
+        );
+    }
+
+    #[test]
+    fn test_encode_color_args_nvenc_hdr10_sets_color_and_bsf() {
+        use crate::{Hdr10Metadata, MasteringDisplay};
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        stream.color_transfer = "smpte2084".into();
+        stream.color_primaries = "bt2020".into();
+        stream.color_space = "bt2020nc".into();
+        let mut format = SourceFormat::from_stream(&stream);
+        format.hdr10 = Some(Hdr10Metadata {
+            mastering_display: Some(MasteringDisplay {
+                green_x: 13250,
+                green_y: 34500,
+                blue_x: 7500,
+                blue_y: 3000,
+                red_x: 34000,
+                red_y: 16000,
+                white_x: 15635,
+                white_y: 16450,
+                max_luminance: 10_000_000,
+                min_luminance: 50,
+            }),
+            max_cll: Some(1000),
+            max_fall: Some(400),
+        });
+        let args = encode_color_args(Codec::NvencH265, &format);
+        // Must set the HDR color tags.
+        assert!(args.windows(2).any(|w| w[0] == "-color_trc" && w[1] == "smpte2084"));
+        // Must set the pixel format for 10-bit.
+        assert!(args.windows(2).any(|w| w[0] == "-pix_fmt" && w[1] == "p010le"));
+        // Must inject HDR metadata via hevc_metadata bitstream filter.
+        let bsf_idx = args.iter().position(|a| a == "-bsf").expect("missing -bsf");
+        let bsf_val = &args[bsf_idx + 1];
+        assert!(
+            bsf_val.starts_with("hevc_metadata="),
+            "expected hevc_metadata BSF, got: {bsf_val}"
+        );
+        assert!(bsf_val.contains("mastering_display="));
+        assert!(bsf_val.contains("max_cll=1000,400"));
+    }
+
+    #[test]
+    fn test_encode_color_args_amf_high_bit_depth_pix_fmt() {
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        let format = SourceFormat::from_stream(&stream);
+        let args = encode_color_args(Codec::AmfH265, &format);
+        assert!(
+            args.windows(2).any(|w| w[0] == "-pix_fmt" && w[1] == "p010le"),
+            "expected -pix_fmt p010le for AMF 10-bit, got {args:?}"
+        );
+    }
+
+    #[test]
+    fn test_encode_color_args_qsv_high_bit_depth_pix_fmt() {
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        let format = SourceFormat::from_stream(&stream);
+        let args = encode_color_args(Codec::QsvH265, &format);
+        assert!(
+            args.windows(2).any(|w| w[0] == "-pix_fmt" && w[1] == "p010le"),
+            "expected -pix_fmt p010le for QSV 10-bit, got {args:?}"
+        );
+    }
+
+    #[test]
+    fn test_encode_color_args_videotoolbox_high_bit_depth_pix_fmt() {
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        let format = SourceFormat::from_stream(&stream);
+        let args = encode_color_args(Codec::VideoToolboxH265, &format);
+        assert!(
+            args.windows(2).any(|w| w[0] == "-pix_fmt" && w[1] == "p010le"),
+            "expected -pix_fmt p010le for VideoToolbox 10-bit, got {args:?}"
+        );
+    }
+
+    #[test]
+    fn test_encode_color_args_nvenc_h264_8bit_does_not_set_p010() {
+        // H.264 NVENC is 8-bit only; must not set p010le.
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        let format = SourceFormat::from_stream(&stream);
+        let args = encode_color_args(Codec::NvencH264, &format);
+        assert!(!args.windows(2).any(|w| w == ["-pix_fmt", "p010le"]));
+        assert!(args.is_empty(), "expected no color args for H.264 NVENC 10-bit: {args:?}");
+    }
+
+    #[test]
+    fn test_encode_color_args_adds_profile_for_hw_hevc_10bit() {
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        let format = SourceFormat::from_stream(&stream);
+        for codec in &[Codec::NvencH265, Codec::QsvH265, Codec::AmfH265, Codec::VideoToolboxH265] {
+            let args = encode_color_args(*codec, &format);
+            assert!(
+                args.windows(2).any(|w| w == ["-profile:v", "main10"]),
+                "{codec:?}: expected -profile:v main10, got {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_color_args_svtav1_hdr10_uses_svtav1_params_not_bsf() {
+        use crate::{Hdr10Metadata, MasteringDisplay};
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        stream.color_transfer = "smpte2084".into();
+        stream.color_primaries = "bt2020".into();
+        stream.color_space = "bt2020nc".into();
+        let mut format = SourceFormat::from_stream(&stream);
+        format.hdr10 = Some(Hdr10Metadata {
+            mastering_display: Some(MasteringDisplay {
+                green_x: 13250,
+                green_y: 34500,
+                blue_x: 7500,
+                blue_y: 3000,
+                red_x: 34000,
+                red_y: 16000,
+                white_x: 15635,
+                white_y: 16450,
+                max_luminance: 10_000_000,
+                min_luminance: 50,
+            }),
+            max_cll: Some(1000),
+            max_fall: Some(400),
+        });
+        let args = encode_color_args(Codec::SvtAv1, &format);
+        // SVT-AV1 must NOT get a bitstream filter; it uses -svtav1-params instead.
+        assert!(!args.iter().any(|a| a == "-bsf"), "SVT-AV1 should not use BSF: {args:?}");
+        assert!(
+            args.windows(2).any(|w| w[0] == "-svtav1-params"),
+            "SVT-AV1 should use -svtav1-params: {args:?}"
+        );
+    }
+
+    #[test]
+    fn test_encode_color_args_x265_hdr10_uses_x265_params_not_bsf() {
+        use crate::{Hdr10Metadata, MasteringDisplay};
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        stream.color_transfer = "smpte2084".into();
+        stream.color_primaries = "bt2020".into();
+        stream.color_space = "bt2020nc".into();
+        let mut format = SourceFormat::from_stream(&stream);
+        format.hdr10 = Some(Hdr10Metadata {
+            mastering_display: Some(MasteringDisplay {
+                green_x: 13250,
+                green_y: 34500,
+                blue_x: 7500,
+                blue_y: 3000,
+                red_x: 34000,
+                red_y: 16000,
+                white_x: 15635,
+                white_y: 16450,
+                max_luminance: 10_000_000,
+                min_luminance: 50,
+            }),
+            max_cll: Some(1000),
+            max_fall: Some(400),
+        });
+        let args = encode_color_args(Codec::X265, &format);
+        assert!(!args.iter().any(|a| a == "-bsf"), "x265 should not use BSF: {args:?}");
+        assert!(
+            args.windows(2).any(|w| w[0] == "-x265-params"),
+            "x265 should use -x265-params: {args:?}"
+        );
+    }
+
+    #[test]
+    fn test_encode_color_args_nvenc_av1_no_bsf() {
+        // AV1 hardware encoders don't get a bitstream filter because
+        // av1_metadata does not support mastering_display/max_cll.
+        let mut stream = base_stream();
+        stream.pix_fmt = "yuv420p10le".into();
+        stream.bits_per_raw_sample = 10;
+        stream.color_transfer = "smpte2084".into();
+        stream.color_primaries = "bt2020".into();
+        stream.color_space = "bt2020nc".into();
+        let format = SourceFormat::from_stream(&stream);
+        let args = encode_color_args(Codec::NvencAv1, &format);
+        assert!(!args.iter().any(|a| a == "-bsf"), "AV1 should not use BSF: {args:?}");
+        // Color tags must still be present.
+        assert!(args.windows(2).any(|w| w[0] == "-color_trc" && w[1] == "smpte2084"));
+    }
+
+    // ── codec_supports_bit_depth ──
+
+    #[test]
+    fn test_codec_supports_bit_depth_10bit_hw() {
+        assert!(codec_supports_bit_depth(Codec::NvencH265, 10));
+        assert!(codec_supports_bit_depth(Codec::QsvH265, 10));
+        assert!(codec_supports_bit_depth(Codec::AmfH265, 10));
+        assert!(codec_supports_bit_depth(Codec::VideoToolboxH265, 10));
+        assert!(codec_supports_bit_depth(Codec::VaapiH265, 10));
+        assert!(codec_supports_bit_depth(Codec::NvencAv1, 10));
+        assert!(codec_supports_bit_depth(Codec::QsvAv1, 10));
+        assert!(codec_supports_bit_depth(Codec::AmfAv1, 10));
+        assert!(codec_supports_bit_depth(Codec::VaapiAv1, 10));
+    }
+
+    #[test]
+    fn test_codec_supports_bit_depth_h264_hw_8bit_only() {
+        assert!(!codec_supports_bit_depth(Codec::NvencH264, 10));
+        assert!(!codec_supports_bit_depth(Codec::QsvH264, 10));
+        assert!(!codec_supports_bit_depth(Codec::AmfH264, 10));
+        assert!(!codec_supports_bit_depth(Codec::VideoToolboxH264, 10));
+        assert!(!codec_supports_bit_depth(Codec::VaapiH264, 10));
     }
 }

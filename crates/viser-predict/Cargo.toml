@@ -28,3 +28,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tract-onnx = { version = "0.22", optional = true }
+
+[features]
+default = []
+onnx = ["tract-onnx"]

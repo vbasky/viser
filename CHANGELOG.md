@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.12.0] - 2026-07-20
+
+Post-P2 roadmap completion: HW HDR encode path, chunked encoding, cost-aware and
+ABR ladder selection, NIQE/BRISQUE differential validation, and optional ONNX
+ExtraTrees prediction.
+
+### Added
+
+- **HW encoder HDR10 / 10-bit path** — NVENC, QSV, AMF, VideoToolbox, and VAAPI
+  receive `p010le`/`p010` and `main10` when the source is 10-bit; HEVC/H.264
+  mastering-display + MaxCLL/MaxFALL injected via `hevc_metadata` /
+  `h264_metadata` bitstream filters. VAAPI HDR surfaces use `format=p010`.
+  Custom VMAF model paths (`.cfg`/`.json`/`.model`) accepted for third-party
+  HDR-domain models with `--hdr-scoring hdr-native`.
+- **Chunked encoding** — `chunk_plan()` / `chunked_encode()` in `viser-ffmpeg`
+  (parallel chunk encode + concat). CLI: `encode --chunk-seconds` / `--parallel`.
+- **Cost-aware ladder** — `CostOpts` + `Ladder::monthly_cost()`; prune by
+  worst cost-per-VMAF under `--max-monthly-cost`. CLI: `--storage-cost`,
+  `--cdn-cost`, `--viewing-hours`, `--max-monthly-cost`.
+- **ABR bitrate targets** — `AbrOpts` and `logarithmic_bitrates`; rung placement
+  by bitrate list or log spacing. CLI: `--abr-bitrates`, `--abr-logarithmic`.
+- **NIQE/BRISQUE differential validation** — synthetic gray8 corpus tests
+  (uniform, checkerboard, gradient, noise) for bounds, ordering, and reference
+  drift gates.
+- **ONNX ExtraTrees predictor** (optional `onnx` feature) — `tract-onnx` loads a
+  trained model for R-D prediction; training script under
+  `crates/viser-predict/train/`. Falls back to heuristics when the model is
+  missing.
+- **Screen-content encoder args** — per-codec tune flags from
+  `screen_content_encoder_args()` wired into the CLI analyze/encode path.
+
+### Changed
+
+- ROADMAP P1 HDR remaining items, P1 chunked encode, P3 cost/ABR, and Future
+  NIQE/ONNX/screen-tune items marked complete. Still open: faithfulness
+  heatmaps, distributed encode coordinator.
+
 ## [0.11.0] - 2026-07-04
 
 P2 completeness tier: VP9, streaming manifests, trained no-reference metrics,

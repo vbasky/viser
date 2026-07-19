@@ -118,12 +118,38 @@ fn parse_ffmpeg_version(line: &str, path: String) -> anyhow::Result<FfmpegVersio
 const KNOWN_VMAF_MODELS: &[&str] =
     &["vmaf_v0.6.1", "vmaf_v0.6.1neg", "vmaf_4k_v0.6.1", "vmaf_b_v0.6.3", "vmaf_4k_v0.6.1neg"];
 
-/// Validate that the given VMAF model name is recognized by libvmaf.
+/// File extensions that identify a VMAF model file path (vs. a built-in name).
+const VMAF_MODEL_EXTENSIONS: &[&str] = &["cfg", "json", "model"];
+
+/// Returns `true` when `model` looks like a file path to a custom VMAF model
+/// (as opposed to a built-in model name).
+pub fn is_vmaf_model_path(model: &str) -> bool {
+    if model.is_empty() || model.contains('\0') {
+        return false;
+    }
+    // Path separators strongly suggest a file path.
+    if model.contains('/') || model.contains('\\') {
+        return true;
+    }
+    // Known model-file extensions.
+    if let Some(dot) = model.rfind('.')
+        && let Some(ext) = model.get(dot + 1..)
+    {
+        return VMAF_MODEL_EXTENSIONS.contains(&ext);
+    }
+    false
+}
+
+/// Validate that the given VMAF model name is recognized by libvmaf, or refers
+/// to a custom model file path.
 pub fn validate_vmaf_model(model: &str) -> anyhow::Result<()> {
-    if KNOWN_VMAF_MODELS.contains(&model) {
+    if KNOWN_VMAF_MODELS.contains(&model) || is_vmaf_model_path(model) {
         return Ok(());
     }
-    anyhow::bail!("unknown VMAF model '{model}'. Known models: {}", KNOWN_VMAF_MODELS.join(", "));
+    anyhow::bail!(
+        "unknown VMAF model '{model}'. Known models: {}; or supply a .cfg/.json/.model file path",
+        KNOWN_VMAF_MODELS.join(", ")
+    );
 }
 
 fn local_binary(name: &str) -> Option<String> {
@@ -155,6 +181,47 @@ mod tests {
         assert!(validate_vmaf_model("vmaf_v99.0").is_err());
         assert!(validate_vmaf_model("unknown_model").is_err());
         assert!(validate_vmaf_model("").is_err());
+    }
+
+    #[test]
+    fn test_validate_vmaf_model_path_accepts_cfg() {
+        assert!(validate_vmaf_model("/path/to/hdr_model.cfg").is_ok());
+        assert!(validate_vmaf_model("./hdr_model.cfg").is_ok());
+    }
+
+    #[test]
+    fn test_validate_vmaf_model_path_accepts_json() {
+        assert!(validate_vmaf_model("custom_vmaf_model.json").is_ok());
+    }
+
+    #[test]
+    fn test_validate_vmaf_model_path_accepts_model_ext() {
+        assert!(validate_vmaf_model("model/hdr_vmaf.model").is_ok());
+    }
+
+    #[test]
+    fn test_is_vmaf_model_path_detects_separators() {
+        assert!(is_vmaf_model_path("/absolute/path.cfg"));
+        assert!(is_vmaf_model_path("relative/path.cfg"));
+        assert!(is_vmaf_model_path("C:\\windows\\path.cfg"));
+    }
+
+    #[test]
+    fn test_is_vmaf_model_path_detects_extensions_without_separator() {
+        assert!(is_vmaf_model_path("custom.cfg"));
+        assert!(is_vmaf_model_path("hdr_model.json"));
+        assert!(is_vmaf_model_path("vmaf.model"));
+    }
+
+    #[test]
+    fn test_is_vmaf_model_path_rejects_builtin_names() {
+        assert!(!is_vmaf_model_path("vmaf_v0.6.1"));
+        assert!(!is_vmaf_model_path("vmaf_b_v0.6.3"));
+    }
+
+    #[test]
+    fn test_is_vmaf_model_path_rejects_empty() {
+        assert!(!is_vmaf_model_path(""));
     }
 
     // ── Version parsing ──

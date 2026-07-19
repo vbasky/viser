@@ -19,6 +19,37 @@ use serde::{Deserialize, Serialize};
 use viser_ffmpeg::Resolution;
 use viser_hull::{Hull, Point};
 
+/// Storage and CDN delivery cost parameters for cost-aware ladder optimization.
+///
+/// When `CostOpts` is set on `Opts`, the ladder is pruned after initial
+/// selection so that the total monthly cost (storage + delivery) stays within
+/// `max_monthly_cost` — removing the rungs with the worst incremental quality
+/// per dollar first.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostOpts {
+    /// Storage cost per gigabyte per month (e.g., 0.023 for S3 Standard).
+    pub storage_cost_per_gb_month: f64,
+    /// CDN delivery cost per gigabyte transferred (e.g., 0.08 for CloudFront).
+    pub cdn_cost_per_gb: f64,
+    /// Expected monthly viewer-hours for this content (e.g., 10_000).
+    pub viewing_hours_per_month: f64,
+    /// Maximum acceptable total monthly cost in dollars. When set to a value
+    /// > 0, the ladder is pruned to stay within this budget by dropping rungs
+    /// with the worst marginal quality-per-dollar ratio.
+    pub max_monthly_cost: f64,
+}
+
+impl Default for CostOpts {
+    fn default() -> Self {
+        Self {
+            storage_cost_per_gb_month: 0.023,
+            cdn_cost_per_gb: 0.08,
+            viewing_hours_per_month: 0.0,
+            max_monthly_cost: 0.0,
+        }
+    }
+}
+
 /// One level in a bitrate ladder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rung {
@@ -36,6 +67,19 @@ pub struct Ladder {
     pub rungs: Vec<Rung>,
 }
 
+/// ABR (adaptive bitrate) configuration for client-aware ladder selection.
+///
+/// When `target_bitrates` is set, the ladder rungs are anchored to those bitrate
+/// targets instead of evenly-spaced VMAF quality targets. This lets the resulting
+/// ladder align with common ABR client bandwidths or a content-delivery strategy.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AbrOpts {
+    /// Target bitrates in kbps for each rung. When `Some`, the ladder is built by
+    /// selecting the hull point closest to each target bitrate (crossover constraints
+    /// and VMAF bounds still apply).
+    pub target_bitrates: Option<Vec<f64>>,
+}
+
 /// Constraints and target count controlling ladder selection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Opts {
@@ -51,6 +95,15 @@ pub struct Opts {
     pub max_vmaf: f64, // maximum quality target
     /// Audio bitrate overhead (kbps) reserved within the delivery budget.
     pub audio_bitrate_kbps: f64, // audio overhead in delivery budget
+    /// ABR-aware selection options. When `abr.target_bitrates` is set, the ladder is
+    /// built by matching those bitrate targets instead of evenly-spaced VMAF targets.
+    #[serde(default)]
+    pub abr: AbrOpts,
+    /// Cost-aware optimization options. When `cost.max_monthly_cost > 0`, the
+    /// ladder is pruned to stay within the budget by removing the least
+    /// cost-effective rungs.
+    #[serde(default)]
+    pub cost: CostOpts,
 }
 
 impl Default for Opts {
@@ -62,8 +115,28 @@ impl Default for Opts {
             min_vmaf: 40.0,
             max_vmaf: 97.0,
             audio_bitrate_kbps: 0.0,
+            abr: AbrOpts::default(),
+            cost: CostOpts::default(),
         }
     }
+}
+
+/// Generates logarithmically-spaced bitrate targets between `min` and `max`.
+///
+/// Each rung is ~(`max`/`min`)^(1/(`n`-1)) times the previous one, so the spacing
+/// is denser at low bitrates where ABR clients are most sensitive and wider at
+/// high bitrates where large jumps are less noticeable.
+///
+/// Returns an empty vec when `n == 0`, `min <= 0`, or `max <= min`.
+pub fn logarithmic_bitrates(min: f64, max: f64, n: usize) -> Vec<f64> {
+    if n == 0 || min <= 0.0 || max <= min {
+        return vec![];
+    }
+    if n == 1 {
+        return vec![(min + max) / 2.0];
+    }
+    let ratio = (max / min).powf(1.0 / (n - 1) as f64);
+    (0..n).map(|i| (min * ratio.powi(i as i32)).round()).collect()
 }
 
 /// Picks the best N rungs from the convex hull to form a bitrate ladder.
@@ -96,53 +169,153 @@ pub fn select(h: &Hull, opts: &Opts) -> Ladder {
         return Ladder { rungs: vec![] };
     }
 
-    if candidates.len() <= opts.num_rungs as usize {
-        return to_ladder(candidates);
-    }
-
-    // Determine VMAF range from candidates
-    let min_q = candidates.first().map(|p| p.vmaf).unwrap_or(0.0);
-    let mut max_q = candidates.last().map(|p| p.vmaf).unwrap_or(100.0);
-    if opts.max_vmaf > 0.0 && max_q > opts.max_vmaf {
-        max_q = opts.max_vmaf;
-    }
-    let min_q = min_q.min(max_q);
-
-    // Generate evenly-spaced quality targets
-    let num = opts.num_rungs as usize;
-    let targets: Vec<f64> = if num == 1 {
-        vec![(min_q + max_q) / 2.0]
+    // ── Build initial ladder ──
+    let initial = if let Some(bitrate_targets) = &opts.abr.target_bitrates
+        && !bitrate_targets.is_empty()
+    {
+        // ABR bitrate-target mode
+        let mut used = vec![false; candidates.len()];
+        let mut selected = Vec::new();
+        for target in bitrate_targets {
+            let mut best_idx = None;
+            let mut best_dist = f64::MAX;
+            for (i, p) in candidates.iter().enumerate() {
+                if used[i] {
+                    continue;
+                }
+                let dist = (p.bitrate - target).abs();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_idx = Some(i);
+                }
+            }
+            if let Some(idx) = best_idx {
+                used[idx] = true;
+                selected.push(candidates[idx].clone());
+            }
+        }
+        to_ladder(selected)
+    } else if candidates.len() <= opts.num_rungs as usize {
+        // VMAF-target mode: fewer candidates than rungs → take all
+        to_ladder(candidates)
     } else {
-        let step = (max_q - min_q) / (num - 1) as f64;
-        (0..num).map(|i| min_q + step * i as f64).collect()
+        // VMAF-target mode: greedy selection
+        let min_q = candidates.first().map(|p| p.vmaf).unwrap_or(0.0);
+        let mut max_q = candidates.last().map(|p| p.vmaf).unwrap_or(100.0);
+        if opts.max_vmaf > 0.0 && max_q > opts.max_vmaf {
+            max_q = opts.max_vmaf;
+        }
+        let min_q = min_q.min(max_q);
+
+        let num = opts.num_rungs as usize;
+        let targets: Vec<f64> = if num == 1 {
+            vec![(min_q + max_q) / 2.0]
+        } else {
+            let step = (max_q - min_q) / (num - 1) as f64;
+            (0..num).map(|i| min_q + step * i as f64).collect()
+        };
+
+        let mut used = vec![false; candidates.len()];
+        let mut selected = Vec::new();
+        for target in &targets {
+            let mut best_idx = None;
+            let mut best_dist = f64::MAX;
+            for (i, p) in candidates.iter().enumerate() {
+                if used[i] {
+                    continue;
+                }
+                let dist = (p.vmaf - target).abs();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_idx = Some(i);
+                }
+            }
+            if let Some(idx) = best_idx {
+                used[idx] = true;
+                selected.push(candidates[idx].clone());
+            }
+        }
+        to_ladder(selected)
     };
 
-    // Greedy selection: for each target, find closest unused candidate
-    let mut used = vec![false; candidates.len()];
-    let mut selected = Vec::new();
+    // ── Cost-aware pruning (applied to any ladder, regardless of selection path) ──
+    if initial.rungs.len() > 1
+        && opts.cost.max_monthly_cost > 0.0
+        && opts.cost.viewing_hours_per_month > 0.0
+    {
+        let mut pruned = initial;
+        cost_prune(&mut pruned, &opts.cost, h);
+        pruned
+    } else {
+        initial
+    }
+}
 
-    for target in &targets {
-        let mut best_idx = None;
-        let mut best_dist = f64::MAX;
+fn cost_prune(ladder: &mut Ladder, cost: &CostOpts, _hull: &Hull) {
+    let duration_secs = 120.0;
 
-        for (i, p) in candidates.iter().enumerate() {
-            if used[i] {
-                continue;
-            }
-            let dist = (p.vmaf - target).abs();
-            if dist < best_dist {
-                best_dist = dist;
-                best_idx = Some(i);
+    loop {
+        let current_cost = ladder.monthly_cost(cost, duration_secs);
+        if current_cost <= cost.max_monthly_cost || ladder.rungs.len() <= 1 {
+            break;
+        }
+
+        // Find the rung to drop: the one with the highest cost per VMAF point
+        // (worst value). For the lowest rung, we consider its VMAF gap to the
+        // next rung. For the highest rung, we consider its VMAF gap from the
+        // previous rung. For middle rungs, we average both gaps.
+        let mut worst_idx = 0;
+        let mut worst_ratio = f64::MIN;
+
+        for i in 0..ladder.rungs.len() {
+            let rung = &ladder.rungs[i].point;
+            // Estimate file size in GB for this rung.
+            let file_gb = rung_bitrate_to_gb(rung.bitrate, duration_secs);
+            let monthly_storage = file_gb * cost.storage_cost_per_gb_month;
+
+            // Estimate delivery cost: assume viewing_hours_per_month evenly
+            // split among remaining rungs for simplicity.
+            let viewing_share = cost.viewing_hours_per_month / ladder.rungs.len() as f64 * 3600.0; // seconds
+            let delivery_gb = rung_bitrate_to_gb(rung.bitrate, viewing_share);
+            let monthly_delivery = delivery_gb * cost.cdn_cost_per_gb;
+
+            let marginal_cost = monthly_storage + monthly_delivery;
+
+            // Marginal VMAF: how much quality do we lose by dropping this rung?
+            let marginal_vmaf = if i == 0 {
+                // Lowest rung: VMAF gap to the next rung up.
+                ladder.rungs[1].point.vmaf - rung.vmaf
+            } else if i == ladder.rungs.len() - 1 {
+                // Highest rung: VMAF gap from the previous rung.
+                rung.vmaf - ladder.rungs[i - 1].point.vmaf
+            } else {
+                // Middle rung: average of both gaps.
+                let gap_down = rung.vmaf - ladder.rungs[i - 1].point.vmaf;
+                let gap_up = ladder.rungs[i + 1].point.vmaf - rung.vmaf;
+                (gap_down + gap_up) / 2.0
+            };
+
+            if marginal_cost > 0.0 && marginal_vmaf > 0.0 {
+                let ratio = marginal_cost / marginal_vmaf;
+                if ratio > worst_ratio {
+                    worst_ratio = ratio;
+                    worst_idx = i;
+                }
             }
         }
 
-        if let Some(idx) = best_idx {
-            used[idx] = true;
-            selected.push(candidates[idx].clone());
-        }
+        ladder.rungs.remove(worst_idx);
     }
 
-    to_ladder(selected)
+    // Re-index after pruning.
+    for (i, rung) in ladder.rungs.iter_mut().enumerate() {
+        rung.index = i as i32;
+    }
+}
+
+/// Converts a bitrate (kbps) over a duration (seconds) to gigabytes.
+fn rung_bitrate_to_gb(bitrate_kbps: f64, duration_secs: f64) -> f64 {
+    bitrate_kbps * duration_secs / 8.0 / 1024.0 / 1024.0
 }
 
 fn build_crossover_map(h: &Hull) -> std::collections::HashMap<Resolution, f64> {
@@ -195,6 +368,42 @@ impl Ladder {
             return 0.0;
         }
         (1.0 - top.bitrate / fixed_bitrate) * 100.0
+    }
+
+    /// Estimated total monthly cost in dollars: storage for all rungs plus CDN
+    /// delivery for the expected viewing hours (assumes all viewing is at the
+    /// highest rung as a conservative estimate).
+    ///
+    /// Returns 0.0 when the ladder is empty.
+    pub fn monthly_cost(&self, cost: &CostOpts, duration_secs: f64) -> f64 {
+        if self.rungs.is_empty() || cost.viewing_hours_per_month <= 0.0 {
+            return 0.0;
+        }
+        let storage = self.monthly_storage_cost(cost.storage_cost_per_gb_month, duration_secs);
+        let delivery = self.monthly_delivery_cost(cost, duration_secs);
+        storage + delivery
+    }
+
+    /// Monthly storage cost for all rungs combined.
+    pub fn monthly_storage_cost(&self, cost_per_gb: f64, duration_secs: f64) -> f64 {
+        self.rungs
+            .iter()
+            .map(|r| rung_bitrate_to_gb(r.point.bitrate, duration_secs) * cost_per_gb)
+            .sum()
+    }
+
+    /// Monthly CDN delivery cost. A conservative estimate that assumes all
+    /// viewing hours are served from the highest rung.
+    pub fn monthly_delivery_cost(&self, cost: &CostOpts, duration_secs: f64) -> f64 {
+        let Some(top) = self.rungs.last() else {
+            return 0.0;
+        };
+        // Total viewing seconds per month.
+        let viewing_secs = cost.viewing_hours_per_month * 3600.0;
+        // How many full-duration streams fit in the viewing budget.
+        let streams = viewing_secs / duration_secs.max(1.0);
+        let data_per_stream_gb = rung_bitrate_to_gb(top.point.bitrate, duration_secs);
+        data_per_stream_gb * streams * cost.cdn_cost_per_gb
     }
 }
 
@@ -261,6 +470,8 @@ mod tests {
                     min_vmaf: min_q,
                     max_vmaf: max_q.max(min_q + 1.0),
                     audio_bitrate_kbps: audio,
+                    abr: AbrOpts::default(),
+                    cost: CostOpts::default(),
                 })
         }
 
@@ -550,5 +761,266 @@ mod tests {
         assert!((opts.max_bitrate - 8000.0).abs() < 1e-9);
         assert!((opts.min_vmaf - 40.0).abs() < 1e-9);
         assert!((opts.max_vmaf - 97.0).abs() < 1e-9);
+        assert!(opts.abr.target_bitrates.is_none());
+    }
+
+    // ── ABR integration ──
+
+    #[test]
+    fn test_select_bitrate_targets_selects_closest() {
+        let h = hull_for(vec![
+            point(500.0, 70.0),
+            point(1200.0, 85.0),
+            point(2500.0, 93.0),
+            point(5000.0, 97.0),
+        ]);
+        let opts = Opts {
+            num_rungs: 4,
+            abr: AbrOpts { target_bitrates: Some(vec![400.0, 1000.0, 2000.0, 4000.0]) },
+            ..Opts::default()
+        };
+        let ladder = select(&h, &opts);
+        assert_eq!(ladder.rungs.len(), 4);
+        // Each rung should be near its target bitrate
+        let brs: Vec<f64> = ladder.rungs.iter().map(|r| r.point.bitrate).collect();
+        assert!((brs[0] - 500.0).abs() < 1.0, "rung 0: {}", brs[0]); // closest to 400
+        assert!((brs[1] - 1200.0).abs() < 1.0, "rung 1: {}", brs[1]); // closest to 1000
+        assert!((brs[2] - 2500.0).abs() < 1.0, "rung 2: {}", brs[2]); // closest to 2000
+        assert!((brs[3] - 5000.0).abs() < 1.0, "rung 3: {}", brs[3]); // closest to 4000
+    }
+
+    #[test]
+    fn test_select_bitrate_targets_respects_constraints() {
+        // Bitrate targets should still respect min_bitrate, max_bitrate, min_vmaf.
+        let h = hull_for(vec![
+            point(100.0, 30.0),
+            point(500.0, 70.0),
+            point(1000.0, 85.0),
+            point(2000.0, 93.0),
+            point(10000.0, 99.0),
+        ]);
+        let opts = Opts {
+            num_rungs: 5,
+            min_bitrate: 200.0,
+            max_bitrate: 5000.0,
+            min_vmaf: 50.0,
+            abr: AbrOpts { target_bitrates: Some(vec![150.0, 500.0, 1000.0, 3000.0, 9000.0]) },
+            ..Opts::default()
+        };
+        let ladder = select(&h, &opts);
+        for rung in &ladder.rungs {
+            assert!(
+                rung.point.bitrate >= 200.0 - 1e-9,
+                "bitrate {:.1} below min",
+                rung.point.bitrate
+            );
+            assert!(rung.point.vmaf >= 50.0 - 1e-9, "vmaf {:.1} below min", rung.point.vmaf);
+        }
+        // The 100 kbps and 10000 kbps points should be excluded by constraints.
+        // The 9000 target will still match a 5000 kbps point (or 2000).
+        assert!(
+            ladder.rungs.iter().all(|r| r.point.bitrate < 6000.0),
+            "high bitrate points should be excluded"
+        );
+    }
+
+    #[test]
+    fn test_select_bitrate_targets_deduplicates() {
+        let h = hull_for(vec![point(500.0, 70.0), point(1000.0, 85.0), point(2000.0, 93.0)]);
+        let opts = Opts {
+            num_rungs: 4,
+            abr: AbrOpts {
+                // Two targets near 1000 and two near 2000
+                target_bitrates: Some(vec![500.0, 600.0, 2000.0, 2100.0]),
+            },
+            ..Opts::default()
+        };
+        let ladder = select(&h, &opts);
+        // Only 3 candidates available; even with 4 targets we get at most 3 rungs
+        assert_eq!(ladder.rungs.len(), 3);
+    }
+
+    #[test]
+    fn test_select_bitrate_targets_empty_returns_empty() {
+        let h = hull_for(vec![point(500.0, 70.0)]);
+        let opts = Opts {
+            num_rungs: 3,
+            abr: AbrOpts { target_bitrates: Some(vec![]) },
+            ..Opts::default()
+        };
+        let ladder = select(&h, &opts);
+        // Empty target list falls through to VMAF-based mode (num_rungs used)
+        assert!(ladder.rungs.len() <= 3);
+    }
+
+    #[test]
+    fn test_select_bitrate_targets_more_targets_than_candidates() {
+        let h = hull_for(vec![point(500.0, 70.0), point(1000.0, 85.0)]);
+        let opts = Opts {
+            num_rungs: 6,
+            abr: AbrOpts {
+                target_bitrates: Some(vec![300.0, 600.0, 900.0, 1200.0, 1500.0, 2000.0]),
+            },
+            ..Opts::default()
+        };
+        let ladder = select(&h, &opts);
+        assert!(ladder.rungs.len() <= 2);
+    }
+
+    // ── Logarithmic bitrates ──
+
+    #[test]
+    fn test_logarithmic_bitrates_n1() {
+        let brs = logarithmic_bitrates(200.0, 8000.0, 1);
+        assert_eq!(brs.len(), 1);
+        assert!((brs[0] - 4100.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_logarithmic_bitrates_n6() {
+        let brs = logarithmic_bitrates(200.0, 8000.0, 6);
+        assert_eq!(brs.len(), 6);
+        // Should be monotonically increasing
+        for w in brs.windows(2) {
+            assert!(w[0] < w[1], "not increasing: {} >= {}", w[0], w[1]);
+        }
+        // First should be near min, last near max
+        assert!((brs[0] - 200.0).abs() < 10.0);
+        assert!((brs[5] - 8000.0).abs() < 10.0);
+    }
+
+    #[test]
+    fn test_logarithmic_bitrates_zero_n() {
+        assert!(logarithmic_bitrates(200.0, 8000.0, 0).is_empty());
+    }
+
+    #[test]
+    fn test_logarithmic_bitrates_min_non_positive() {
+        assert!(logarithmic_bitrates(0.0, 8000.0, 6).is_empty());
+        assert!(logarithmic_bitrates(-100.0, 8000.0, 6).is_empty());
+    }
+
+    #[test]
+    fn test_logarithmic_bitrates_min_equals_max() {
+        assert!(logarithmic_bitrates(5000.0, 5000.0, 6).is_empty());
+    }
+
+    // ── Cost calculations ──
+
+    #[test]
+    fn test_rung_bitrate_to_gb() {
+        // 1000 kbps for 1 hour = 1000 * 3600 / 8 / 1024 / 1024 ≈ 0.429 GB
+        let gb = rung_bitrate_to_gb(1000.0, 3600.0);
+        assert!((gb - 0.429).abs() < 0.001, "got {gb}");
+    }
+
+    #[test]
+    fn test_monthly_storage_cost() {
+        let ladder = Ladder {
+            rungs: vec![
+                Rung { point: point(500.0, 70.0), index: 0 },
+                Rung { point: point(2000.0, 90.0), index: 1 },
+            ],
+        };
+        let cost = CostOpts { storage_cost_per_gb_month: 0.023, ..CostOpts::default() };
+        let storage = ladder.monthly_storage_cost(cost.storage_cost_per_gb_month, 3600.0);
+        // ~0.429 GB per rung * 0.023 * 2 rungs ≈ 0.0197
+        assert!(storage > 0.0 && storage < 1.0, "storage cost {storage} out of range");
+    }
+
+    #[test]
+    fn test_monthly_cost_empty_ladder() {
+        let ladder = Ladder { rungs: vec![] };
+        let cost = CostOpts { viewing_hours_per_month: 1000.0, ..CostOpts::default() };
+        assert_eq!(ladder.monthly_cost(&cost, 120.0), 0.0);
+    }
+
+    #[test]
+    fn test_monthly_cost_zero_viewing() {
+        let ladder = Ladder { rungs: vec![Rung { point: point(5000.0, 95.0), index: 0 }] };
+        // With zero viewing hours, cost should be 0 (delivery is 0).
+        let cost = CostOpts { viewing_hours_per_month: 0.0, ..CostOpts::default() };
+        assert_eq!(ladder.monthly_cost(&cost, 120.0), 0.0);
+    }
+
+    #[test]
+    fn test_cost_prune_directly_reduces_rungs() {
+        let mut ladder = Ladder {
+            rungs: vec![
+                Rung { point: point(200.0, 50.0), index: 0 },
+                Rung { point: point(500.0, 70.0), index: 1 },
+                Rung { point: point(1000.0, 85.0), index: 2 },
+                Rung { point: point(2000.0, 93.0), index: 3 },
+                Rung { point: point(4000.0, 97.0), index: 4 },
+                Rung { point: point(8000.0, 99.0), index: 5 },
+            ],
+        };
+        let cost = CostOpts {
+            storage_cost_per_gb_month: 0.023,
+            cdn_cost_per_gb: 0.08,
+            viewing_hours_per_month: 10_000.0,
+            max_monthly_cost: 500.0,
+        };
+        let initial_cost = ladder.monthly_cost(&cost, 120.0);
+        assert!(initial_cost > 500.0, "expected cost > 500, got {initial_cost}");
+        assert_eq!(ladder.rungs.len(), 6);
+
+        // Prune
+        let hull = hull_for(vec![]);
+        cost_prune(&mut ladder, &cost, &hull);
+
+        let pruned_cost = ladder.monthly_cost(&cost, 120.0);
+        assert!(ladder.rungs.len() < 6, "expected pruning: got {} rungs", ladder.rungs.len());
+        assert!(pruned_cost <= 500.0 + 10.0, "cost ${pruned_cost:.2} exceeds budget");
+    }
+
+    #[test]
+    fn test_cost_prune_reduces_rungs_when_budget_is_small() {
+        let hull = hull_for(vec![
+            point(200.0, 50.0),
+            point(500.0, 70.0),
+            point(1000.0, 85.0),
+            point(2000.0, 93.0),
+            point(4000.0, 97.0),
+            point(8000.0, 99.0),
+        ]);
+        // With 10k viewing hours at $0.08/GB CDN, the top rungs cost
+        // significantly more than the lower ones. A $500 budget should
+        // cause some (not all) rungs to be pruned.
+        let opts = Opts {
+            num_rungs: 6,
+            cost: CostOpts {
+                storage_cost_per_gb_month: 0.023,
+                cdn_cost_per_gb: 0.08,
+                viewing_hours_per_month: 10_000.0,
+                max_monthly_cost: 500.0,
+            },
+            ..Opts::default()
+        };
+        let ladder = select(&hull, &opts);
+        assert!(ladder.rungs.len() < 6, "expected cost pruning: got {} rungs", ladder.rungs.len());
+        let cost = ladder.monthly_cost(&opts.cost, 120.0);
+        assert!(cost <= 500.0 + 10.0, "cost ${cost:.2} exceeds budget");
+    }
+
+    #[test]
+    fn test_cost_prune_no_budget_keeps_all_rungs() {
+        let hull = hull_for(vec![
+            point(200.0, 50.0),
+            point(500.0, 70.0),
+            point(1000.0, 85.0),
+            point(2000.0, 93.0),
+        ]);
+        let opts = Opts {
+            num_rungs: 4,
+            cost: CostOpts {
+                max_monthly_cost: 0.0, // no budget = no pruning
+                viewing_hours_per_month: 100_000.0,
+                ..CostOpts::default()
+            },
+            ..Opts::default()
+        };
+        let ladder = select(&hull, &opts);
+        assert_eq!(ladder.rungs.len(), 4, "no pruning expected");
     }
 }

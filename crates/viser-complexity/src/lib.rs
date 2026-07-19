@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::Duration;
 use tokio::process::Command;
-use viser_ffmpeg::{ffmpeg_path, probe};
+use viser_ffmpeg::{Codec, ffmpeg_path, probe};
 
 /// Classified scene type based on spatial/temporal complexity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -444,6 +444,27 @@ pub fn encoding_hints(detection: &ScreenContentDetection) -> EncodingHints {
     }
 }
 
+/// Returns codec-specific FFmpeg encoder arguments for screen content.
+///
+/// These flags preserve sharp edges and high-frequency detail (text, UI
+/// elements, grid lines) that are common in screen content but cheap to
+/// encode — the CRF offset + preset slowdown from [`EncodingHints`] handles
+/// the bitrate budget side, while these control internal encoder tools.
+///
+/// Software encoders (x264, SVT-AV1, VP9) have explicit screen-tune
+/// parameters. x265 and hardware encoders rely on the CRF/preset adjustments
+/// from [`EncodingHints`] since they lack dedicated screen content modes.
+pub fn screen_content_encoder_args(codec: &Codec) -> Vec<String> {
+    match *codec {
+        Codec::X264 => vec!["-tune-content".into(), "screen".into()],
+        Codec::SvtAv1 => {
+            vec!["-svtav1-params".into(), "enable-qm=1:enable-overlays=1".into()]
+        }
+        Codec::Vp9 => vec!["-tune-content".into(), "screen".into()],
+        _ => vec![],
+    }
+}
+
 /// Applies [`EncodingHints`] to a CRF sweep and preset in-place.
 pub fn apply_encoding_hints(crf_values: &mut Vec<i32>, preset: &mut String, hints: &EncodingHints) {
     if hints.crf_offset != 0 {
@@ -575,6 +596,33 @@ mod screen_tests {
         let detection = detect_screen_content(&profile);
         assert_eq!(detection.content_type, ContentType::Screen);
         assert!(detection.confidence >= 70.0, "expected >= 70, got {}", detection.confidence);
+    }
+
+    #[test]
+    fn test_screen_content_encoder_args_x264() {
+        let args = screen_content_encoder_args(&Codec::X264);
+        assert_eq!(args, vec!["-tune-content", "screen"]);
+    }
+
+    #[test]
+    fn test_screen_content_encoder_args_svtav1() {
+        let args = screen_content_encoder_args(&Codec::SvtAv1);
+        assert!(args.len() == 2, "expected 2 args (flag + value), got {args:?}");
+        assert_eq!(args[0], "-svtav1-params");
+        assert!(args[1].contains("enable-qm=1"));
+        assert!(args[1].contains("enable-overlays=1"));
+    }
+
+    #[test]
+    fn test_screen_content_encoder_args_x265_returns_empty() {
+        let args = screen_content_encoder_args(&Codec::X265);
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn test_screen_content_encoder_args_hw_returns_empty() {
+        let args = screen_content_encoder_args(&Codec::NvencH264);
+        assert!(args.is_empty());
     }
 }
 

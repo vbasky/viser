@@ -47,6 +47,10 @@ pub struct Config {
     /// How HDR/high bit-depth sources are prepared before quality scoring.
     #[serde(default)]
     pub hdr_scoring: viser_quality::HdrScoringMode,
+    /// Extra FFmpeg encoder arguments appended to each trial encode job.
+    /// Used for codec-specific tuning (e.g., screen content parameters).
+    #[serde(default)]
+    pub extra_encoder_args: Vec<String>,
 }
 
 /// Complete output of a per-title analysis.
@@ -263,7 +267,7 @@ pub async fn analyze(
                 bufsize: 0.0,
                 preset: preset_for_codec(t.codec, &cfg.encoding.preset),
                 hwaccel: None,
-                extra_args: vec![],
+                extra_args: cfg.extra_encoder_args.clone(),
                 source_format: Some(source_format.clone()),
             };
 

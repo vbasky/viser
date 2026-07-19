@@ -13,15 +13,6 @@ categories = ["multimedia::video", "multimedia::encoding"]
 name = "viser_ffmpeg"
 path = "src/lib.rs"
 
-[dev-dependencies]
-proptest = { workspace = true }
-tempfile = "3"
-tokio = { workspace = true, features = ["rt", "process", "io-util", "sync", "macros", "rt-multi-thread"] }
-viser-quality = { path = "../viser-quality" }
-
-[lints]
-workspace = true
-
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -29,6 +20,15 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "process", "io-util", "sync"] }
 tracing = { workspace = true }
+tempfile = "3"
+
+[dev-dependencies]
+proptest = { workspace = true }
+tokio = { workspace = true, features = ["rt", "process", "io-util", "sync", "macros", "rt-multi-thread"] }
+viser-quality = { path = "../viser-quality" }
+
+[lints]
+workspace = true
 
 [features]
 revelo = ["dep:revelo"]

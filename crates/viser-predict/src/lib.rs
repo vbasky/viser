@@ -2,7 +2,8 @@
 //!
 //! Extracts spatial/temporal complexity features from the source, predicts
 //! rate-distortion points for each (resolution, codec, CRF) combination using
-//! calibrated heuristics, then runs the standard hull + ladder selection path.
+//! calibrated heuristics (or an ONNX model when the `onnx` feature is enabled),
+//! then runs the standard hull + ladder selection path.
 
 use std::time::{Duration, Instant};
 
@@ -12,6 +13,9 @@ use viser_ffmpeg::{Codec, ProbeResult, Resolution, probe};
 use viser_hull::{Hull, Point, compute_per_codec, compute_upper};
 use viser_ladder::Ladder;
 use viser_pertitle::Config;
+
+#[cfg(feature = "onnx")]
+mod onnx;
 
 /// Output of a prediction run — same shape as per-title analysis but marked predicted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,10 +31,17 @@ pub struct Result {
     pub duration: Duration,
     pub predicted: bool,
     pub warnings: Vec<String>,
+    /// Path to the ONNX model used (empty when heuristics were used).
+    #[serde(default)]
+    pub model_path: String,
 }
 
 /// Predicts a per-title ladder from content features (no encodes).
-pub async fn predict(source: &str, cfg: Config) -> anyhow::Result<Result> {
+///
+/// When the `onnx` feature is enabled and `model_path` is non-empty, uses a
+/// trained ONNX model for R-D point prediction. Falls back to heuristic
+/// `predict_point()` when no model is provided.
+pub async fn predict(source: &str, cfg: Config, model_path: &str) -> anyhow::Result<Result> {
     let start = Instant::now();
     cfg.encoding.validate()?;
 
@@ -41,11 +52,23 @@ pub async fn predict(source: &str, cfg: Config) -> anyhow::Result<Result> {
     )
     .await?;
 
+    let audio_bitrate_kbps =
+        source_info.audio_stream().map(|a| a.bit_rate as f64 / 1000.0).unwrap_or(0.0);
+
     let mut points = Vec::new();
+    let (use_onnx, warnings, model_path) = try_load_onnx(model_path).await;
+
     for &resolution in &cfg.encoding.resolutions {
         for &codec in &cfg.encoding.codecs {
             for &crf in &cfg.encoding.crf_values {
-                let (bitrate, vmaf) = predict_point(&complexity, resolution, codec, crf);
+                let (bitrate, vmaf) = predict_point_or_onnx(
+                    &use_onnx,
+                    &complexity,
+                    resolution,
+                    codec,
+                    crf,
+                    audio_bitrate_kbps,
+                );
                 points.push(Point { resolution, codec, crf, bitrate, vmaf, psnr: 0.0, ssim: 0.0 });
             }
         }
@@ -56,9 +79,7 @@ pub async fn predict(source: &str, cfg: Config) -> anyhow::Result<Result> {
     let hull = compute_upper(&points);
     let per_codec = compute_per_codec(&points);
     let mut ladder_opts = cfg.ladder_opts.clone();
-    if let Some(audio) = source_info.audio_stream() {
-        ladder_opts.audio_bitrate_kbps = audio.bit_rate as f64 / 1000.0;
-    }
+    ladder_opts.audio_bitrate_kbps = audio_bitrate_kbps;
     let ladder = viser_ladder::select(&hull, &ladder_opts);
 
     Ok(Result {
@@ -72,10 +93,64 @@ pub async fn predict(source: &str, cfg: Config) -> anyhow::Result<Result> {
         ladder,
         duration: start.elapsed(),
         predicted: true,
-        warnings: vec![
-            "ladder predicted from complexity features; validate with per-title analyze before delivery".into(),
-        ],
+        warnings,
+        model_path,
     })
+}
+
+/// Tries to load an ONNX model from the given path.
+///
+/// Returns `(Some(model), warnings, model_path)` on success, or `(None, heuristic_warning, "")`.
+async fn try_load_onnx(model_path: &str) -> (Option<OnnxModel>, Vec<String>, String) {
+    #[cfg(not(feature = "onnx"))]
+    let _ = model_path;
+    #[cfg(feature = "onnx")]
+    if !model_path.is_empty() {
+        match onnx::OnnxModel::load(model_path) {
+            Ok(model) => {
+                let warnings = vec![format!("R-D points predicted by ONNX model: {model_path}")];
+                return (Some(OnnxModel::Onnx(model)), warnings, model_path.to_string());
+            }
+            Err(e) => {
+                let warnings = vec![
+                    format!("failed to load ONNX model '{model_path}': {e}; falling back to heuristics"),
+                    "ladder predicted from complexity features; validate with per-title analyze before delivery".into(),
+                ];
+                return (None, warnings, String::new());
+            }
+        }
+    }
+
+    (None, vec!["ladder predicted from complexity features; validate with per-title analyze before delivery".into()], String::new())
+}
+
+/// Internal wrapper to avoid exposing tract types in the public API.
+enum OnnxModel {
+    #[cfg(feature = "onnx")]
+    #[allow(dead_code)]
+    Onnx(onnx::OnnxModel),
+}
+
+/// Predicts an R-D point, using the ONNX model when available.
+fn predict_point_or_onnx(
+    model: &Option<OnnxModel>,
+    profile: &Profile,
+    resolution: Resolution,
+    codec: Codec,
+    crf: i32,
+    audio_bitrate_kbps: f64,
+) -> (f64, f64) {
+    #[cfg(not(feature = "onnx"))]
+    {
+        let _ = (model, audio_bitrate_kbps);
+    }
+    #[cfg(feature = "onnx")]
+    if let Some(OnnxModel::Onnx(ref m)) = model {
+        if let Ok(result) = m.predict(profile, resolution, codec, crf, audio_bitrate_kbps) {
+            return result;
+        }
+    }
+    predict_point(profile, resolution, codec, crf)
 }
 
 /// Heuristic R-D point prediction from complexity features.

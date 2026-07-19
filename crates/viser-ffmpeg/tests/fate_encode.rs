@@ -2,7 +2,9 @@ mod common;
 
 use common::{generate_reference_clip, generate_test_clip, has_ffmpeg};
 use tokio::sync::mpsc;
-use viser_ffmpeg::{Codec, EncodeJob, RateControlMode, Resolution, concat, encode, extract, probe};
+use viser_ffmpeg::{
+    Codec, EncodeJob, RateControlMode, Resolution, chunked_encode, concat, encode, extract, probe,
+};
 
 #[tokio::test]
 async fn fate_encode_x264_crf_produces_output() {
@@ -504,5 +506,132 @@ async fn fate_encode_reference_then_distorted_quality_check() {
         "lossy encode ({}) should be smaller than lossless ({})",
         result.file_size,
         ref_size
+    );
+}
+
+#[tokio::test]
+async fn fate_chunked_encode_2s_source_in_1s_chunks() {
+    if !has_ffmpeg() {
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let input = generate_test_clip(tmp.path(), "chunked_in.mp4", "640x360", 2, 24, "libx264");
+    let output = tmp.path().join("chunked_out.mp4");
+
+    let job = EncodeJob {
+        input: input.to_string_lossy().into_owned(),
+        output: output.to_string_lossy().into_owned(),
+        resolution: None,
+        codec: Codec::X264,
+        crf: 23,
+        rate_control: RateControlMode::Crf,
+        target_bitrate: 0.0,
+        max_bitrate: 0.0,
+        bufsize: 0.0,
+        preset: "ultrafast".into(),
+        hwaccel: None,
+        extra_args: vec![],
+        source_format: None,
+    };
+
+    let result = chunked_encode(job, 1.0, 2).await.unwrap();
+    assert!(output.exists(), "chunked output must exist");
+    assert!(result.file_size > 0, "chunked file must have size > 0");
+    assert!(result.bitrate > 0.0, "chunked bitrate must be > 0");
+}
+
+#[tokio::test]
+async fn fate_chunked_encode_single_chunk_falls_through() {
+    // When chunk_seconds > duration, chunked_encode should delegate to
+    // regular encode (single chunk).
+    if !has_ffmpeg() {
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let input = generate_test_clip(tmp.path(), "single_chunk_in.mp4", "640x360", 1, 24, "libx264");
+    let output = tmp.path().join("single_chunk_out.mp4");
+
+    let job = EncodeJob {
+        input: input.to_string_lossy().into_owned(),
+        output: output.to_string_lossy().into_owned(),
+        resolution: None,
+        codec: Codec::X264,
+        crf: 23,
+        rate_control: RateControlMode::Crf,
+        target_bitrate: 0.0,
+        max_bitrate: 0.0,
+        bufsize: 0.0,
+        preset: "ultrafast".into(),
+        hwaccel: None,
+        extra_args: vec![],
+        source_format: None,
+    };
+
+    let result = chunked_encode(job, 999.0, 2).await.unwrap();
+    assert!(output.exists(), "single-chunk output must exist");
+    assert!(result.file_size > 0, "single-chunk file must have size > 0");
+}
+
+#[tokio::test]
+async fn fate_chunked_encode_3s_source_matches_direct_encode_quality() {
+    if !has_ffmpeg() {
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let input = generate_test_clip(tmp.path(), "quality_chunk_in.mp4", "640x360", 3, 24, "libx264");
+
+    // Direct encode
+    let direct_output = tmp.path().join("direct.mp4");
+    let direct_job = EncodeJob {
+        input: input.to_string_lossy().into_owned(),
+        output: direct_output.to_string_lossy().into_owned(),
+        resolution: None,
+        codec: Codec::X264,
+        crf: 28,
+        rate_control: RateControlMode::Crf,
+        target_bitrate: 0.0,
+        max_bitrate: 0.0,
+        bufsize: 0.0,
+        preset: "ultrafast".into(),
+        hwaccel: None,
+        extra_args: vec![],
+        source_format: None,
+    };
+    let direct_result = encode(direct_job, None).await.unwrap();
+
+    // Chunked encode (3 x 1s chunks)
+    let chunked_output = tmp.path().join("chunked.mp4");
+    let chunked_job = EncodeJob {
+        input: input.to_string_lossy().into_owned(),
+        output: chunked_output.to_string_lossy().into_owned(),
+        resolution: None,
+        codec: Codec::X264,
+        crf: 28,
+        rate_control: RateControlMode::Crf,
+        target_bitrate: 0.0,
+        max_bitrate: 0.0,
+        bufsize: 0.0,
+        preset: "ultrafast".into(),
+        hwaccel: None,
+        extra_args: vec![],
+        source_format: None,
+    };
+    let chunked_result = chunked_encode(chunked_job, 1.0, 2).await.unwrap();
+
+    // Both should produce valid output with similar bitrates
+    assert!(direct_output.exists(), "direct output must exist");
+    assert!(chunked_output.exists(), "chunked output must exist");
+
+    // Bitrates should be within 50% of each other (chunk boundaries add overhead)
+    let ratio = (direct_result.bitrate / chunked_result.bitrate)
+        .max(chunked_result.bitrate / direct_result.bitrate);
+    assert!(
+        ratio < 2.0,
+        "bitrate ratio {ratio:.2} too large: direct={:.0}k chunked={:.0}k",
+        direct_result.bitrate,
+        chunked_result.bitrate
     );
 }

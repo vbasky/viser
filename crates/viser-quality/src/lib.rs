@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::warn;
-use viser_ffmpeg::{ProbeCache, ffmpeg_path};
+use viser_ffmpeg::{ProbeCache, ffmpeg_path, is_vmaf_model_path};
 
 mod aggd;
 pub mod brisque;
@@ -236,8 +236,14 @@ pub async fn measure(
     let tmp = tempfile::Builder::new().prefix("viser-vmaf-").suffix(".json").tempfile()?;
     let log_path = tmp.path().to_string_lossy().to_string();
 
-    // Build libvmaf filter string
-    let mut vmaf_opts = format!("log_fmt=json:log_path={log_path}:model=version={model_name}");
+    // Build libvmaf filter string. Custom model files use model=path=...;
+    // built-in models use model=version=...
+    let model_ref = if is_vmaf_model_path(model_name) {
+        format!("path={model_name}")
+    } else {
+        format!("version={model_name}")
+    };
+    let mut vmaf_opts = format!("log_fmt=json:log_path={log_path}:model={model_ref}");
 
     // libvmaf accepts the `feature` option only once; repeating `:feature=...`
     // makes later entries silently override earlier ones (dropping metrics).

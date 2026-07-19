@@ -37,6 +37,9 @@ pub struct Config {
     pub allow_hdr: bool,
     /// How HDR/high bit-depth sources are prepared before quality scoring.
     pub hdr_scoring: viser_quality::HdrScoringMode,
+    /// Extra FFmpeg encoder arguments appended to each trial encode job.
+    /// Used for codec-specific tuning (e.g., screen content parameters).
+    pub extra_encoder_args: Vec<String>,
 }
 
 impl Default for Config {
@@ -51,6 +54,7 @@ impl Default for Config {
             opt_metric: viser_quality::Metric::default(),
             allow_hdr: false,
             hdr_scoring: viser_quality::HdrScoringMode::Auto,
+            extra_encoder_args: vec![],
         }
     }
 }
@@ -156,6 +160,7 @@ pub async fn analyze(
             opt_metric: cfg.opt_metric,
             allow_hdr: cfg.allow_hdr,
             hdr_scoring: cfg.hdr_scoring,
+            extra_encoder_args: cfg.extra_encoder_args.clone(),
         };
         let sender = sender.clone();
         let shots_len = shots.len();

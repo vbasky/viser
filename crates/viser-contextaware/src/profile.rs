@@ -56,6 +56,8 @@ pub fn mobile_profile() -> Profile {
             min_vmaf: 50.0,
             max_vmaf: 95.0,
             audio_bitrate_kbps: 0.0,
+            abr: Default::default(),
+            cost: Default::default(),
         },
     }
 }
@@ -91,6 +93,8 @@ pub fn tv_profile() -> Profile {
             min_vmaf: 40.0,
             max_vmaf: 0.0,
             audio_bitrate_kbps: 0.0,
+            abr: Default::default(),
+            cost: Default::default(),
         },
     }
 }
@@ -112,6 +116,8 @@ pub fn tv_4k_profile() -> Profile {
             min_vmaf: 40.0,
             max_vmaf: 97.0,
             audio_bitrate_kbps: 0.0,
+            abr: Default::default(),
+            cost: Default::default(),
         },
     }
 }

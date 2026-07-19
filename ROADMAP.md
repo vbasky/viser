@@ -92,13 +92,30 @@ ladder prediction, and CLI chart generation.
         codecs survive a re-encode.
   - [x] HDR-aware scoring via tonemap-to-BT.709 (`--hdr-scoring`), shipped with
         the 0.9.0 10-bit/HDR work.
-  - [ ] Native HDR-domain VMAF (no SDR tonemap) and HDR10 passthrough on the
-        hardware encoders (NVENC/QSV/VAAPI/AMF). libvmaf ships no official HDR
-        model, so the scoring side needs a PQ-domain path and differential
-        validation; the HW encoders need per-backend metadata flags (no shared
-        `master-display` string like the software encoders).
-- [ ] **Chunked/segmented encoding.** Distribute encodes across machines for
-      long-form content. Currently in backlog.
+  - [x] **Native HDR-domain VMAF + HW encoder HDR10 passthrough.** Two sub-items
+        that ship together in 0.12.0.
+    - [x] **HW encoder high bit depth.** NVENC, QSV, AMF, VideoToolbox, and VAAPI
+          all receive `-pix_fmt p010le` (or `p010` VAAPI surface) when the source
+          is 10-bit; `-profile:v main10` is emitted for HEVC/AV1 backends.
+          `codec_supports_bit_depth` extended to cover all HW codecs.
+    - [x] **HW encoder HDR metadata.** For HEVC and H.264 hardware encoders,
+          mastering-display and MaxCLL/MaxFALL are injected via codec-family
+          bitstream filters (`hevc_metadata` / `h264_metadata`), which operate on
+          the encoded bitstream regardless of the encoder backend. AV1 hardware
+          encoders (that lack BSF support) continue to use `-color_*` tags.
+    - [x] **VAAPI HDR surfaces.** `build_filter_chain()` emits `format=p010`
+          instead of `format=nv12` when the source is HDR or high-bit-depth.
+    - [x] **Custom VMAF model paths.** `validate_vmaf_model` and the libvmaf
+          filter string accept `.cfg`/`.json`/`.model` file paths (using
+          `model=path=...` syntax) in addition to built-in model names, enabling
+          users to supply third-party HDR-domain VMAF models alongside
+          `--hdr-scoring hdr-native`.
+- [x] **Chunked/segmented encoding.** Encode long-form content by splitting into
+      independent chunks. `viser-ffmpeg` gains `chunk_plan()` and `chunked_encode()`
+      (parallel chunk encode + automatic concat). The `encode` CLI command accepts
+      `--chunk-seconds` and `--parallel` for chunked single-output encodes. The
+      delivery pipeline delegates to the shared `chunk_plan()`. Distributed
+      multi-machine coordination remains in Future.
 - [x] **Scene-complexity blending.** `viser-ladder::blend_shot_ladders` merges
       per-shot hulls into a duration-weighted composite ladder with optional
       `smooth_ladder` transition capping. CLI: `per-shot analyze --blend-ladder`.
@@ -202,20 +219,45 @@ ladder prediction, and CLI chart generation.
       --analysis result.json --output <dir>` emit R-D, per-codec, and ladder PNGs
       via `viser-chart`. Per-shot blended-ladder chart via `--blend-ladder
       --charts`.
-- [ ] **Cost-aware optimization.** Storage + CDN delivery costs factored into
-      ladder selection.
-- [ ] **ABR logic integration.** Ladder selection tuned for client switching
-      behavior and bandwidth distributions.
+- [x] **Cost-aware optimization.** Storage + CDN delivery costs factored into
+      ladder selection. `CostOpts` struct with per-GB storage/CDN pricing, viewing
+      hours, and a monthly budget cap. `Ladder::monthly_cost()` estimates total
+      spend (storage for all rungs + delivery at the top rung). When
+      `--max-monthly-cost` is set, `select()` prunes the ladder after initial
+      selection by iteratively removing the rung with the worst cost-per-VMAF
+      ratio until the budget is met. CLI: `--storage-cost`, `--cdn-cost`,
+      `--viewing-hours`, `--max-monthly-cost`.
+- [x] **ABR logic integration.** Ladder selection now supports a bitrate-target
+      mode alongside the existing VMAF-target mode. When `--abr-bitrates` is set,
+      rungs are placed at the specified bitrates by greedily matching the closest
+      hull point (crossover/VMAF constraints still apply). A `logarithmic_bitrates`
+      helper generates spacing that matches industry ABR spec behavior (denser at
+      low bitrates). CLI: `per-title analyze --abr-bitrates 300,600,1200,2500,5000`
+      or `--abr-logarithmic`. Shipped as `AbrOpts` in `viser-ladder`.
 
 ## Future — worth tracking
 
-- [ ] **NIQE/BRISQUE differential validation.** Automated parity tests against
-      OpenCV reference scores on a fixed frame corpus; gate model updates.
-- [ ] **ExtraTrees / ONNX ladder predictor.** Replace `viser-predict` heuristics
-      with a trained model fit on real per-title convex-hull data.
+- [x] **NIQE/BRISQUE differential validation.** Frame generators produce a
+      fixed corpus of synthetic gray8 frames (uniform, checkerboard, gradient,
+      white noise). NIQE and BRISQUE tests validate finite bounds, relative
+      ordering (structured > uniform), and gate against OpenCV reference scores
+      via `eprintln!` warnings when drift exceeds tolerance. Both model files
+      include comments with the OpenCV commands needed to regenerate references.
+- [x] **ExtraTrees / ONNX ladder predictor.** `tract-onnx` optional dependency
+      (`onnx` feature) loads an ExtraTrees model exported to ONNX for R-D point
+      prediction. The `OnnxModel` in `viser-predict/src/onnx.rs` takes 7 features
+      (complexity, spatial, temporal, log-pixels, codec-efficiency, CRF, audio)
+      and returns `(bitrate, vmaf)`. Falls back to heuristics when no model is
+      provided or loading fails. CLI: `--predict-model <path>` on `per-title
+      predict`. Training script at `train/train_extra_trees.py` converts per-title
+      analysis JSON → ONNX via sklearn ExtraTreesRegressor.
 - [ ] **Faithfulness heatmaps.** Per-frame HF-gain maps overlaid in the
       comparison player for AI-enhancement QA workflows.
 - [ ] **Distributed encode coordinator.** Job queue + object-store artifacts for
       chunked per-title trial matrices (feeds the P1 chunked-encoding item).
-- [ ] **Screen-content tune presets per codec.** VP9 `cpu-used`, AV1
-      `enable-qm`, and HW encoder tune flags keyed off `ContentType::Screen`.
+- [x] **Screen-content tune presets per codec.** `screen_content_encoder_args()`
+      in `viser-complexity` returns codec-specific FFmpeg flags: `-tune-content
+      screen` for x264, `enable-qm=1:enable-overlays=1` for SVT-AV1, and empty
+      for x265/HW encoders (CRF+preset adjustments suffice). Wired into the
+      `extra_encoder_args` field on per-title and per-shot Config, which flows
+      into each `EncodeJob.extra_args` during trial encoding.
