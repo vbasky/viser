@@ -1316,9 +1316,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_chunked_encode_single_chunk_delegates_to_encode() {
-        // When the source is shorter than chunk_seconds, chunked_encode should
-        // detect one chunk and delegate to encode(), which will fail on a
-        // non-existent file in the same way.
+        // With chunk_seconds much larger than any real source, planning still
+        // goes through probe (and would fall through to a single encode).
+        // A missing input must fail at probe/encode — not as a chunk-plan error.
         let job = EncodeJob {
             input: "/nonexistent/input.mp4".into(),
             output: "out.mp4".into(),
@@ -1329,11 +1329,25 @@ mod tests {
             ..sample_job(RateControlMode::Crf)
         };
         let result = chunked_encode(job, 999999.0, 2).await;
-        // Should fail because the file doesn't exist (encode will fail),
-        // not because of a chunking error.
-        assert!(result.is_err());
+        assert!(result.is_err(), "expected error for non-existent input");
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("ffmpeg") || err.contains("probe") || err.contains("encode"));
+        let err_l = err.to_lowercase();
+        assert!(
+            !err_l.contains("no chunks were planned"),
+            "missing input should not surface as a chunk-plan error: {err}"
+        );
+        // Accept probe/ffmpeg/encode path failures and plain missing-file I/O.
+        assert!(
+            err_l.contains("ffmpeg")
+                || err_l.contains("ffprobe")
+                || err_l.contains("probe")
+                || err_l.contains("encode")
+                || err_l.contains("no such file")
+                || err_l.contains("not found")
+                || err_l.contains("failed to start")
+                || err_l.contains("failed to read"),
+            "unexpected error for missing input: {err}"
+        );
     }
 
     #[test]

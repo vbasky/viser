@@ -171,12 +171,14 @@ impl ProbeResult {
 /// Runs ffprobe on the given file and returns parsed results.
 pub async fn probe(path: &str) -> anyhow::Result<ProbeResult> {
     let args = ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", path];
+    let bin = ffprobe_path();
 
-    let output = Command::new(ffprobe_path())
+    let output = Command::new(&bin)
         .args(args)
         .stderr(std::process::Stdio::piped())
         .output()
-        .await?;
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to start ffprobe at '{bin}': {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
