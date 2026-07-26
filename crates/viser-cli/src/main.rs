@@ -12,7 +12,11 @@ use std::time::Duration;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use viser_encoding::clean_stale_temp_dirs;
-use viser_ffmpeg::{check_ffmpeg, check_ffprobe, init_hw_encoders, validate_vmaf_model};
+use viser_engine::DynEngine;
+use viser_ffmpeg::{
+    EngineKind, EngineOptions, check_ffmpeg, check_ffprobe, init_hw_encoders, install_engine,
+    validate_vmaf_model,
+};
 
 #[derive(Parser)]
 #[command(
@@ -27,8 +31,67 @@ struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
+    /// Video encode engine: ffmpeg (default), external, or mlvc.
+    /// Non-ffmpeg engines automatically keep FFmpeg for probe/extract (dual-engine).
+    #[arg(long, global = true, default_value = "ffmpeg")]
+    engine: String,
+
+    /// Override probe/extract/concat engine (default: ffmpeg when encode is non-ffmpeg)
+    #[arg(long, global = true)]
+    probe_engine: Option<String>,
+
+    /// Override encode engine (defaults to --engine)
+    #[arg(long, global = true)]
+    encode_engine: Option<String>,
+
+    /// External encode command template (`{input}` `{output}` `{crf}` …)
+    #[arg(long, global = true, env = "VISER_EXTERNAL_ENCODE")]
+    external_encode: Option<String>,
+
+    /// External probe command template printing ProbeResult JSON
+    #[arg(long, global = true, env = "VISER_EXTERNAL_PROBE")]
+    external_probe: Option<String>,
+
+    /// MLVC encode command or full template (env: VISER_MLVC_CMD)
+    #[arg(long, global = true, env = "VISER_MLVC_CMD")]
+    mlvc_cmd: Option<String>,
+
+    /// MLVC model: psnr | perceptual
+    #[arg(long, global = true, env = "VISER_MLVC_MODEL")]
+    mlvc_model: Option<String>,
+
+    /// MLVC variant: full | s
+    #[arg(long, global = true, env = "VISER_MLVC_VARIANT")]
+    mlvc_variant: Option<String>,
+
+    /// Path to MLVC checkpoint weights
+    #[arg(long, global = true, env = "VISER_MLVC_WEIGHTS")]
+    mlvc_weights: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
+}
+
+impl Cli {
+    fn engine_options(&self) -> anyhow::Result<EngineOptions> {
+        let parse_opt = |s: &Option<String>| -> anyhow::Result<Option<EngineKind>> {
+            match s {
+                Some(v) => Ok(Some(EngineKind::parse(v)?)),
+                None => Ok(None),
+            }
+        };
+        Ok(EngineOptions {
+            engine: Some(EngineKind::parse(&self.engine)?),
+            media: parse_opt(&self.probe_engine)?,
+            encode: parse_opt(&self.encode_engine)?,
+            external_encode: self.external_encode.clone(),
+            external_probe: self.external_probe.clone(),
+            mlvc_cmd: self.mlvc_cmd.clone(),
+            mlvc_model: self.mlvc_model.clone(),
+            mlvc_variant: self.mlvc_variant.clone(),
+            mlvc_weights: self.mlvc_weights.clone(),
+        })
+    }
 }
 
 #[derive(Subcommand)]
@@ -737,22 +800,36 @@ async fn main() -> anyhow::Result<()> {
         if cli.verbose { tracing::Level::DEBUG } else { tracing::Level::WARN };
     tracing_subscriber::fmt().with_max_level(level).with_writer(std::io::stderr).init();
 
-    // Validate FFmpeg toolchain at startup — surfaces missing/misconfigured
-    // binaries before any work begins.
-    match (check_ffmpeg(), check_ffprobe()) {
-        (Ok(ffmpeg), Ok(ffprobe)) => {
-            tracing::debug!(
-                "ffmpeg {} (major {})  ffprobe {} (major {})",
-                ffmpeg.raw,
-                ffmpeg.major,
-                ffprobe.raw,
-                ffprobe.major,
-            );
-        }
-        (Err(e), _) | (_, Err(e)) => {
-            anyhow::bail!("{e}");
-        }
-    };
+    // Resolve and register the video engine (FFmpeg default; MLVC/external via flags).
+    let engine_opts = cli.engine_options()?;
+    let engine = install_engine(&engine_opts)?;
+    tracing::debug!(
+        engine = engine.name(),
+        engine_id = %engine.capabilities().id,
+        "video engine ready"
+    );
+
+    // Validate FFmpeg toolchain when media role uses it (always for dual-engine).
+    let needs_ffmpeg = matches!(engine_opts.media_kind(), EngineKind::Ffmpeg)
+        || matches!(engine_opts.encode_kind(), EngineKind::Ffmpeg)
+        || engine.id() == "composite"
+        || engine.id() == "ffmpeg";
+    if needs_ffmpeg {
+        match (check_ffmpeg(), check_ffprobe()) {
+            (Ok(ffmpeg), Ok(ffprobe)) => {
+                tracing::debug!(
+                    "ffmpeg {} (major {})  ffprobe {} (major {})",
+                    ffmpeg.raw,
+                    ffmpeg.major,
+                    ffprobe.raw,
+                    ffprobe.major,
+                );
+            }
+            (Err(e), _) | (_, Err(e)) => {
+                anyhow::bail!("{e}");
+            }
+        };
+    }
 
     // Detect available hardware encoders
     init_hw_encoders().await;
@@ -786,7 +863,7 @@ async fn main() -> anyhow::Result<()> {
     // so partial progress is usually resumable even on hard kill.
     let cmd_future = async move {
         match command {
-            Commands::Encode(args) => cmd_encode(args).await,
+            Commands::Encode(args) => cmd_encode(args, engine.clone()).await,
             Commands::Inspect { command } => match command {
                 InspectCommands::Probe { file, probe_engine } => {
                     cmd_inspect_probe(&file, &probe_engine).await
@@ -800,19 +877,23 @@ async fn main() -> anyhow::Result<()> {
                 QualityCommands::Measure(args) => cmd_quality_measure(args).await,
             },
             Commands::PerTitle { command } => match command {
-                PerTitleCommands::Analyze(args) => cmd_pertitle_analyze(args).await,
+                PerTitleCommands::Analyze(args) => cmd_pertitle_analyze(args, engine.clone()).await,
                 PerTitleCommands::Predict(args) => cmd_pertitle_predict(args).await,
-                PerTitleCommands::Deliver(args) => cmd_pertitle_deliver(args).await,
+                PerTitleCommands::Deliver(args) => cmd_pertitle_deliver(args, engine.clone()).await,
             },
             Commands::PerShot { command } => match command {
                 PerShotCommands::Detect(args) => cmd_pershot_detect(args).await,
-                PerShotCommands::Analyze(args) => cmd_pershot_analyze(args).await,
+                PerShotCommands::Analyze(args) => cmd_pershot_analyze(args, engine.clone()).await,
             },
             Commands::PerSegment { command } => match command {
-                PerSegmentCommands::Analyze(args) => cmd_persegment_analyze(args).await,
+                PerSegmentCommands::Analyze(args) => {
+                    cmd_persegment_analyze(args, engine.clone()).await
+                }
             },
             Commands::ContextAware { command } => match command {
-                ContextAwareCommands::Analyze(args) => cmd_contextaware_analyze(args).await,
+                ContextAwareCommands::Analyze(args) => {
+                    cmd_contextaware_analyze(args, engine.clone()).await
+                }
             },
             Commands::Compare(args) => cmd_compare(args).await,
             Commands::Metrics { command } => match command {
@@ -838,7 +919,7 @@ async fn main() -> anyhow::Result<()> {
 
 // ── Command Implementations ──
 
-async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
+async fn cmd_encode(args: EncodeArgs, engine: DynEngine) -> anyhow::Result<()> {
     let codec: viser_ffmpeg::Codec = args.codec.parse()?;
 
     // Warn (don't fail) if the requested decode method wasn't detected — probing
@@ -894,7 +975,7 @@ async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
         None
     };
 
-    let source_info = viser_ffmpeg::probe(&args.input).await?;
+    let source_info = engine.probe(&args.input).await?;
     let source_video = source_info
         .video_stream()
         .ok_or_else(|| anyhow::anyhow!("no video stream found in {}", args.input))?;
@@ -916,11 +997,13 @@ async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
     }
     .with_source_video(source_video);
 
+    println!("  Engine: {}", engine.capabilities().id);
+
     let result = if let Some(chunk_seconds) = args.chunk_seconds {
         if chunk_seconds <= 0.0 {
             anyhow::bail!("--chunk-seconds must be positive");
         }
-        viser_ffmpeg::chunked_encode(job, chunk_seconds, args.parallel).await?
+        engine.chunked_encode(job, chunk_seconds, args.parallel).await?
     } else {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<viser_ffmpeg::Progress>(10);
         tokio::spawn(async move {
@@ -931,7 +1014,7 @@ async fn cmd_encode(args: EncodeArgs) -> anyhow::Result<()> {
                 );
             }
         });
-        viser_ffmpeg::encode(job, Some(tx)).await?
+        engine.encode(job, Some(tx)).await?
     };
     eprintln!();
     println!("\nEncode complete:");
@@ -1568,7 +1651,7 @@ async fn cmd_pertitle_predict(args: PerTitlePredictArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
+async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs, engine: DynEngine) -> anyhow::Result<()> {
     let resolutions = parse_resolutions(&args.resolutions)?;
     let codecs = parse_codecs(&args.codecs)?;
 
@@ -1631,6 +1714,7 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
     let total = resolutions.len() * codecs.len() * crf_values.len();
     println!("Viser Per-Title Analysis");
     println!("  Source:  {}", args.input);
+    println!("  Engine:  {}", engine.capabilities().id);
     println!(
         "  Trials:  {} ({} res x {} CRF x {} codecs)",
         total,
@@ -1661,7 +1745,7 @@ async fn cmd_pertitle_analyze(args: PerTitleAnalyzeArgs) -> anyhow::Result<()> {
         }
     });
 
-    let result = viser_pertitle::analyze(&args.input, cfg, Some(tx)).await?;
+    let result = viser_pertitle::analyze_with(&args.input, cfg, Some(tx), engine).await?;
     eprintln!();
 
     for warning in &result.warnings {
@@ -1787,7 +1871,7 @@ async fn cmd_metrics_faithfulness(args: MetricsFaithfulnessArgs) -> anyhow::Resu
     Ok(())
 }
 
-async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
+async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs, engine: DynEngine) -> anyhow::Result<()> {
     validate_file(&args.analysis)?;
 
     let result = viser_pertitle::Result::load_json(&args.analysis)?;
@@ -1828,17 +1912,18 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
     let base_format = if let Some(video) = result.source_info.video_stream() {
         Some(viser_ffmpeg::SourceFormat::from_stream(video))
     } else {
-        let info = viser_ffmpeg::probe(&source).await?;
+        let info = engine.probe(&source).await?;
         info.video_stream().map(viser_ffmpeg::SourceFormat::from_stream)
     };
     let source_format = match base_format {
-        Some(fmt) => Some(fmt.enrich_hdr10(&source).await),
+        Some(fmt) => Some(viser_ffmpeg::enrich_hdr10(fmt, &source).await),
         None => None,
     };
 
     println!("Viser Per-Title Delivery");
     println!("  Analysis: {}", args.analysis);
     println!("  Source:   {source}");
+    println!("  Engine:   {}", engine.capabilities().id);
     println!("  Rungs:    {}", result.ladder.rungs.len());
     println!("  Preset:   {preset}");
     println!("  Mode:     {}", args.mode);
@@ -1924,6 +2009,7 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
         let preset = preset.clone();
         let source_format = source_format.clone();
         let semaphore = semaphore.clone();
+        let engine = engine.clone();
         join_set.spawn(async move {
             let _permit = semaphore.acquire_owned().await?;
             let encode_result = run_delivery_job(
@@ -1934,9 +2020,9 @@ async fn cmd_pertitle_deliver(args: PerTitleDeliverArgs) -> anyhow::Result<()> {
                     mode: delivery_mode,
                     bufsize_factor,
                     chunk_seconds,
-                    source_duration,
                     source_format: source_format.as_ref().clone(),
                 },
+                engine,
             )
             .await?;
             Ok::<DeliveryArtifact, anyhow::Error>(DeliveryArtifact {
@@ -2057,7 +2143,7 @@ async fn cmd_pershot_detect(args: PerShotDetectArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs) -> anyhow::Result<()> {
+async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs, engine: DynEngine) -> anyhow::Result<()> {
     let resolutions = parse_resolutions(&args.resolutions)?;
     let codecs = parse_codecs(&args.codecs)?;
 
@@ -2097,9 +2183,13 @@ async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs) -> anyhow::Result<()> {
     };
 
     let metric_label = args.metric.label();
-    println!("Viser Per-Shot Analysis\n  Source: {}", args.input);
+    println!(
+        "Viser Per-Shot Analysis\n  Source: {}\n  Engine: {}",
+        args.input,
+        engine.capabilities().id
+    );
 
-    let result = viser_pershot::analyze(&args.input, cfg, None).await?;
+    let result = viser_pershot::analyze_with(&args.input, cfg, None, engine).await?;
     println!(
         "  {} shots, {} trials, {:.1}s",
         result.shot_count,
@@ -2170,7 +2260,10 @@ async fn cmd_pershot_analyze(args: PerShotAnalyzeArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_persegment_analyze(args: PerSegmentAnalyzeArgs) -> anyhow::Result<()> {
+async fn cmd_persegment_analyze(
+    args: PerSegmentAnalyzeArgs,
+    engine: DynEngine,
+) -> anyhow::Result<()> {
     let codec: viser_ffmpeg::Codec = args.codec.parse()?;
     let cfg = viser_persegment::Config {
         target_vmaf: args.target_vmaf,
@@ -2191,9 +2284,10 @@ async fn cmd_persegment_analyze(args: PerSegmentAnalyzeArgs) -> anyhow::Result<(
 
     println!("Viser Segment-Level CRF Adaptation");
     println!("  Source:      {}", args.input);
+    println!("  Engine:      {}", engine.capabilities().id);
     println!("  Target VMAF: {:.1} (+/- {:.1})", args.target_vmaf, args.tolerance);
 
-    let result = viser_persegment::adapt(&args.input, cfg).await?;
+    let result = viser_persegment::adapt_with(&args.input, cfg, engine).await?;
     println!(
         "\n  {} segments, avg {:.0} kbps, avg VMAF {:.1}",
         result.segments.len(),
@@ -2203,7 +2297,10 @@ async fn cmd_persegment_analyze(args: PerSegmentAnalyzeArgs) -> anyhow::Result<(
     Ok(())
 }
 
-async fn cmd_contextaware_analyze(args: ContextAwareAnalyzeArgs) -> anyhow::Result<()> {
+async fn cmd_contextaware_analyze(
+    args: ContextAwareAnalyzeArgs,
+    engine: DynEngine,
+) -> anyhow::Result<()> {
     use viser_contextaware::*;
 
     let mut profiles = Vec::new();
@@ -2225,8 +2322,12 @@ async fn cmd_contextaware_analyze(args: ContextAwareAnalyzeArgs) -> anyhow::Resu
         parallel: args.parallel,
     };
 
-    println!("Viser Context-Aware Analysis\n  Source:  {}", args.input);
-    let result = analyze(&args.input, cfg, None).await?;
+    println!(
+        "Viser Context-Aware Analysis\n  Source:  {}\n  Engine:  {}",
+        args.input,
+        engine.capabilities().id
+    );
+    let result = analyze_with(&args.input, cfg, None, engine).await?;
 
     for dev in &result.devices {
         println!("\n  {} ({}):", dev.profile.name, dev.profile.description);
@@ -2334,7 +2435,6 @@ struct DeliveryOpts {
     mode: viser_ffmpeg::RateControlMode,
     bufsize_factor: f64,
     chunk_seconds: Option<f64>,
-    source_duration: f64,
     source_format: Option<viser_ffmpeg::SourceFormat>,
 }
 
@@ -2355,13 +2455,14 @@ async fn run_delivery_job(
     job: &DeliveryPlan,
     source: &str,
     opts: &DeliveryOpts,
+    engine: DynEngine,
 ) -> anyhow::Result<viser_ffmpeg::EncodeResult> {
     if let Some(chunk_seconds) = opts.chunk_seconds {
-        return run_chunked_delivery_job(job, source, opts, chunk_seconds).await;
+        return run_chunked_delivery_job(job, source, opts, chunk_seconds, engine).await;
     }
 
     let encode_job = build_delivery_encode_job(job, source, &job.output, vec![], opts);
-    viser_ffmpeg::encode(encode_job, None).await
+    engine.encode(encode_job, None).await
 }
 
 async fn run_chunked_delivery_job(
@@ -2369,40 +2470,10 @@ async fn run_chunked_delivery_job(
     source: &str,
     opts: &DeliveryOpts,
     chunk_seconds: f64,
+    engine: DynEngine,
 ) -> anyhow::Result<viser_ffmpeg::EncodeResult> {
-    let tmp_dir = tempfile::Builder::new().prefix("viser-delivery-").tempdir()?;
-    let chunks = viser_ffmpeg::chunk_plan(opts.source_duration, chunk_seconds);
-    let mut outputs = Vec::with_capacity(chunks.len());
-    let started = std::time::Instant::now();
-
-    for (index, (start, duration)) in chunks.iter().copied().enumerate() {
-        let chunk_output = tmp_dir.path().join(format!("chunk_{index:03}.mp4"));
-        let extra_args = vec![
-            "-ss".to_string(),
-            format!("{start:.6}"),
-            "-t".to_string(),
-            format!("{duration:.6}"),
-        ];
-        let encode_job = build_delivery_encode_job(
-            job,
-            source,
-            &chunk_output.to_string_lossy(),
-            extra_args,
-            opts,
-        );
-        viser_ffmpeg::encode(encode_job, None).await?;
-        outputs.push(chunk_output.to_string_lossy().into_owned());
-    }
-
-    viser_ffmpeg::concat(&outputs, &job.output).await?;
-
-    let meta = std::fs::metadata(&job.output)?;
-    Ok(viser_ffmpeg::EncodeResult {
-        job: build_delivery_encode_job(job, source, &job.output, vec![], opts),
-        bitrate: probe_average_bitrate(&job.output).await?,
-        file_size: meta.len(),
-        duration: started.elapsed(),
-    })
+    let encode_job = build_delivery_encode_job(job, source, &job.output, vec![], opts);
+    engine.chunked_encode(encode_job, chunk_seconds, 1).await
 }
 
 fn build_delivery_encode_job(
@@ -2439,10 +2510,6 @@ fn build_delivery_encode_job(
         extra_args,
         source_format: opts.source_format.clone(),
     }
-}
-
-async fn probe_average_bitrate(path: &str) -> anyhow::Result<f64> {
-    Ok(viser_ffmpeg::probe(path).await?.format.bit_rate as f64 / 1000.0)
 }
 
 fn parse_delivery_mode(mode: &str) -> anyhow::Result<viser_ffmpeg::RateControlMode> {

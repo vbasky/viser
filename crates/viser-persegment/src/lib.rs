@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use viser_complexity::{self, AnalyzeOpts, Profile};
-use viser_ffmpeg::{self, Codec, EncodeJob, Resolution, SourceFormat, probe};
+use viser_engine::{Codec, DynEngine, EncodeJob, RateControlMode, Resolution, SourceFormat};
+use viser_ffmpeg::enrich_hdr10;
 use viser_quality::{self, MeasureOpts, Metric};
 
 /// Config for segment-level CRF adaptation.
@@ -92,8 +93,14 @@ pub struct Result {
     pub complexity_profile: Profile,
 }
 
-/// Runs segment-level adaptation.
+/// Runs segment-level adaptation using the process-wide default engine.
 pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
+    let engine = viser_engine::default_engine().unwrap_or_else(|_| viser_ffmpeg::ffmpeg_engine());
+    adapt_with(source, cfg, engine).await
+}
+
+/// Segment-level adaptation with an explicit [`DynEngine`].
+pub async fn adapt_with(source: &str, cfg: Config, engine: DynEngine) -> anyhow::Result<Result> {
     let start = Instant::now();
 
     // Step 1: Analyze complexity
@@ -118,11 +125,11 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
         })
         .collect();
 
-    let source_info = probe(source).await?;
+    let source_info = engine.probe(source).await?;
     let source_video = source_info
         .video_stream()
         .ok_or_else(|| anyhow::anyhow!("no video stream found in {source}"))?;
-    let source_format = SourceFormat::from_stream(source_video).enrich_hdr10(source).await;
+    let source_format = enrich_hdr10(SourceFormat::from_stream(source_video), source).await;
 
     // Step 3: Temp directory
     let tmp_dir = tempfile::Builder::new().prefix("viser-persegment-").tempdir()?;
@@ -155,6 +162,7 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
         };
         let tmp_dir_path = tmp_dir.path().to_path_buf();
         let source_format = source_format.clone();
+        let engine = engine.clone();
 
         set.spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
@@ -170,13 +178,14 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
                 let seg_encoded = tmp_dir_path.join(format!("seg_{i:03}_crf{}.mp4", seg.crf));
 
                 let dur_secs = (seg.end - seg.start).as_secs_f64();
-                viser_ffmpeg::extract(
-                    &source,
-                    &seg_source.to_string_lossy(),
-                    seg.start.as_secs_f64(),
-                    dur_secs,
-                )
-                .await?;
+                engine
+                    .extract(
+                        &source,
+                        &seg_source.to_string_lossy(),
+                        seg.start.as_secs_f64(),
+                        dur_secs,
+                    )
+                    .await?;
 
                 let job = EncodeJob {
                     input: seg_source.to_string_lossy().to_string(),
@@ -185,7 +194,7 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
                     crf: seg.crf,
                     preset: cfg_shared.preset.clone(),
                     resolution: cfg_shared.resolution,
-                    rate_control: viser_ffmpeg::RateControlMode::Crf,
+                    rate_control: RateControlMode::Crf,
                     target_bitrate: 0.0,
                     max_bitrate: 0.0,
                     bufsize: 0.0,
@@ -194,7 +203,7 @@ pub async fn adapt(source: &str, cfg: Config) -> anyhow::Result<Result> {
                     source_format: Some(source_format.clone()),
                 };
 
-                let enc_result = viser_ffmpeg::encode(job, None).await?;
+                let enc_result = engine.encode(job, None).await?;
                 seg.bitrate = enc_result.bitrate;
 
                 let q_result = viser_quality::measure(

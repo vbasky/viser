@@ -13,9 +13,8 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::{info, warn};
 use viser_checkpoint::Checkpoint;
 use viser_encoding::{Config as EncodingConfig, ProgressSender, preset_for_codec};
-use viser_ffmpeg::{
-    Codec, EncodeJob, ProbeCache, ProbeResult, Resolution, SourceFormat, encode, probe,
-};
+use viser_engine::{Codec, DynEngine, EncodeJob, ProbeResult, Resolution, SourceFormat};
+use viser_ffmpeg::{ProbeCache, enrich_hdr10};
 use viser_hull::{Crossover, Hull, Point, compute_per_codec, compute_upper};
 use viser_ladder::{self, Ladder, Opts as LadderOpts};
 use viser_quality::{self, MeasureOpts, Metric};
@@ -111,10 +110,30 @@ pub struct TrialProgress {
 }
 
 /// Runs a full per-title analysis on the given source video.
+///
+/// Uses the process-wide default [`VideoEngine`](viser_engine::VideoEngine)
+/// (FFmpeg unless replaced via [`viser_engine::set_default_engine`]).
 pub async fn analyze(
     source: &str,
     cfg: Config,
     progress_tx: Option<mpsc::Sender<TrialProgress>>,
+) -> anyhow::Result<Result> {
+    let engine = viser_engine::default_engine().or_else(|_| {
+        // Fall back so library users that skip CLI registration still work.
+        Ok::<_, anyhow::Error>(viser_ffmpeg::ffmpeg_engine())
+    })?;
+    analyze_with(source, cfg, progress_tx, engine).await
+}
+
+/// Runs per-title analysis with an explicit [`DynEngine`].
+///
+/// Use this for dual-engine setups (e.g. FFmpeg probe + MLVC encode) resolved
+/// via [`viser_ffmpeg::resolve_engine`].
+pub async fn analyze_with(
+    source: &str,
+    cfg: Config,
+    progress_tx: Option<mpsc::Sender<TrialProgress>>,
+    engine: DynEngine,
 ) -> anyhow::Result<Result> {
     let start = Instant::now();
 
@@ -125,7 +144,7 @@ pub async fn analyze(
     cfg.encoding.validate()?;
 
     // Probe source
-    let source_info = probe(source).await?;
+    let source_info = engine.probe(source).await?;
     let video = source_info
         .video_stream()
         .ok_or_else(|| anyhow::anyhow!("no video stream found in {source}"))?;
@@ -195,7 +214,7 @@ pub async fn analyze(
     let probe_cache = ProbeCache::new();
     let sender = Arc::new(ProgressSender::new(progress_tx));
 
-    let source_format = SourceFormat::from_stream(video).enrich_hdr10(source).await;
+    let source_format = enrich_hdr10(SourceFormat::from_stream(video), source).await;
     let hdr_scoring = cfg.hdr_scoring;
     let points = Arc::new(Mutex::new(Vec::new()));
     let warnings = Arc::new(Mutex::new(Vec::new()));
@@ -208,6 +227,11 @@ pub async fn analyze(
             if video.pix_fmt.is_empty() { "unknown" } else { &video.pix_fmt },
         ));
     }
+    info!(
+        engine = engine.name(),
+        engine_id = %engine.capabilities().id,
+        "using video engine for per-title analysis"
+    );
     let done = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let total = trials.len();
 
@@ -225,6 +249,7 @@ pub async fn analyze(
         let warnings = warnings.clone();
         let done = done.clone();
         let source_format = source_format.clone();
+        let engine = engine.clone();
 
         set.spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
@@ -271,7 +296,7 @@ pub async fn analyze(
                 source_format: Some(source_format.clone()),
             };
 
-            let enc_result = match encode(job, None).await {
+            let enc_result = match engine.encode(job, None).await {
                 Ok(r) => r,
                 Err(e) => {
                     let msg = format!(

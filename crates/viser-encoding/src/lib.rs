@@ -152,7 +152,7 @@ fn hw_preset_for_codec(codec: Codec, preset: &str) -> String {
             other => other.to_string(),
         },
         EncoderBackend::VideoToolbox => preset.to_string(),
-        EncoderBackend::Software => preset.to_string(),
+        EncoderBackend::Software | EncoderBackend::External => preset.to_string(),
     }
 }
 

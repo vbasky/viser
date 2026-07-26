@@ -251,6 +251,13 @@ ladder prediction, and CLI chart generation.
       provided or loading fails. CLI: `--predict-model <path>` on `per-title
       predict`. Training script at `train/train_extra_trees.py` converts per-title
       analysis JSON → ONNX via sklearn ExtraTreesRegressor.
+- [x] **Engine-agnostic media layer.** New `viser-engine` crate owns shared
+      types (`Codec`, `EncodeJob`, `ProbeResult`, …) and the `VideoEngine` trait.
+      `viser-ffmpeg` implements `FfmpegEngine`; `CompositeEngine` pairs media +
+      encode backends; `MlvcConfig` + CLI `--engine mlvc` / `--mlvc-*` flags;
+      pipelines expose `analyze_with` / `adapt_with(DynEngine)`. Docs:
+      `docs/video-engines.md`. Open: deeper native MLVC Python bindings (beyond
+      shell bridge), quality path for pure custom bitstreams without FFmpeg decode.
 - [ ] **Faithfulness heatmaps.** Per-frame HF-gain maps overlaid in the
       comparison player for AI-enhancement QA workflows.
 - [ ] **Distributed encode coordinator.** Job queue + object-store artifacts for

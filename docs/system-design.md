@@ -23,7 +23,8 @@ graph TB
     end
 
     subgraph Foundation["Foundation Layer"]
-        FF[viser-ffmpeg<br/>Encode · Probe · Cache]
+        ENG[viser-engine<br/>VideoEngine trait · shared types]
+        FF[viser-ffmpeg<br/>FFmpeg backend · Cache]
         QM[viser-quality<br/>VMAF · PSNR · SSIM]
         ENC[viser-encoding<br/>Config · Presets · Progress]
         CP[viser-checkpoint<br/>Resumable State]
@@ -36,12 +37,13 @@ graph TB
 
     CMD --> PT & PS & SEG & CA & CMP & CHT & FF & QM
 
-    PT --> FF & QM & HULL & LADDER & ENC & CP
-    PS --> PT & SHOT & FF & HULL & LADDER & ENC
-    SEG --> FF & QM & CX
-    CA --> PT & FF & HULL & LADDER & ENC
+    PT --> ENG & FF & QM & HULL & LADDER & ENC & CP
+    PS --> PT & SHOT & ENG & FF & HULL & LADDER & ENC
+    SEG --> ENG & FF & QM & CX
+    CA --> PT & ENG & FF & HULL & LADDER & ENC
 
-    LADDER --> FF & HULL
+    LADDER --> ENG & HULL
+    FF --> ENG
 
     classDef app fill:#4a90d9,stroke:#2c5f8a,color:#fff
     classDef pipeline fill:#e8744f,stroke:#b85a3e,color:#fff
@@ -52,15 +54,19 @@ graph TB
     class CMD app
     class PT,PS,SEG,CA pipeline
     class HULL,LADDER,SHOT,CX core
-    class FF,QM,ENC,CP foundation
+    class ENG,FF,QM,ENC,CP foundation
     class CMP,CHT output
 ```
+
+> **Engine boundary:** pipelines should prefer `viser-engine` types and
+> `VideoEngine` over calling FFmpeg helpers directly. See
+> [video-engines.md](video-engines.md).
 
 ## Data Flow: Per-Title Pipeline (Core)
 
 ```mermaid
 flowchart LR
-    A[Video File] --> B[viser-ffmpeg<br/>probe]
+    A[Video File] --> B[VideoEngine<br/>probe]
     B --> C[Trial Matrix<br/>res × codec × CRF]
     C --> D{Checkpoint<br/>exists?}
     D -- skip completed --> E

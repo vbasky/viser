@@ -1,331 +1,48 @@
-//! FFmpeg/FFprobe wrapper for the `viser` video-encoding-optimizer workspace.
+//! FFmpeg/FFprobe **engine** for the `viser` video-encoding-optimizer workspace.
 //!
-//! Provides typed primitives (codecs, resolutions, rate-control modes) plus
-//! functions to encode (`encode`), probe media (`probe`), and resolve the
-//! `ffmpeg`/`ffprobe` binary paths. A `ProbeCache` deduplicates probe calls.
+//! This crate implements [`viser_engine::VideoEngine`] for FFmpeg/FFprobe and
+//! re-exports the shared engine-agnostic types so existing `use viser_ffmpeg::…`
+//! imports keep working.
+//!
+//! Prefer depending on `viser-engine` for types and the [`VideoEngine`] trait when
+//! writing new code. Register this backend at startup:
+//!
+//! ```ignore
+//! viser_engine::set_default_engine(viser_ffmpeg::ffmpeg_engine());
+//! ```
 
 mod cache;
 mod color;
 mod encode;
+mod engine;
 mod hdr;
 mod hw_encode;
 mod path;
 mod probe;
 #[cfg(feature = "revelo")]
 mod probe_revelo;
+mod resolve;
 #[cfg(feature = "revelo")]
 pub use probe_revelo::probe as probe_revelo;
 
 pub use cache::*;
 pub use color::*;
 pub use encode::*;
+pub use engine::*;
 pub use hdr::*;
 pub use hw_encode::*;
 pub use path::*;
 pub use probe::*;
+pub use resolve::*;
 
-use serde::{Deserialize, Serialize};
-use std::fmt;
-
-/// Supported video codec.
-///
-/// Software encoders (libx264, libx265, libsvtav1, libvpx-vp9) are always available.
-/// Hardware encoder variants require FFmpeg built with the matching SDK
-/// and a GPU with the matching ASIC at runtime; availability is detected
-/// via `ffmpeg -encoders`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Codec {
-    /// H.264/AVC via `libx264`.
-    #[serde(rename = "libx264")]
-    X264,
-    /// H.265/HEVC via `libx265`.
-    #[serde(rename = "libx265")]
-    X265,
-    /// AV1 via `libsvtav1` (SVT-AV1).
-    #[serde(rename = "libsvtav1")]
-    SvtAv1,
-    /// VP9 via `libvpx-vp9`.
-    #[serde(rename = "libvpx-vp9")]
-    Vp9,
-
-    // ── Hardware encoders (H.264) ──
-    /// NVIDIA NVENC H.264 (`h264_nvenc`).
-    #[serde(rename = "h264_nvenc")]
-    NvencH264,
-    /// Intel QuickSync H.264 (`h264_qsv`).
-    #[serde(rename = "h264_qsv")]
-    QsvH264,
-    /// Apple VideoToolbox H.264 (`h264_videotoolbox`).
-    #[serde(rename = "h264_videotoolbox")]
-    VideoToolboxH264,
-    /// Linux VAAPI H.264 (`h264_vaapi`).
-    #[serde(rename = "h264_vaapi")]
-    VaapiH264,
-    /// AMD AMF H.264 (`h264_amf`).
-    #[serde(rename = "h264_amf")]
-    AmfH264,
-
-    // ── Hardware encoders (H.265/HEVC) ──
-    /// NVIDIA NVENC HEVC (`hevc_nvenc`).
-    #[serde(rename = "hevc_nvenc")]
-    NvencH265,
-    /// Intel QuickSync HEVC (`hevc_qsv`).
-    #[serde(rename = "hevc_qsv")]
-    QsvH265,
-    /// Apple VideoToolbox HEVC (`hevc_videotoolbox`).
-    #[serde(rename = "hevc_videotoolbox")]
-    VideoToolboxH265,
-    /// Linux VAAPI HEVC (`hevc_vaapi`).
-    #[serde(rename = "hevc_vaapi")]
-    VaapiH265,
-    /// AMD AMF HEVC (`hevc_amf`).
-    #[serde(rename = "hevc_amf")]
-    AmfH265,
-
-    // ── Hardware encoders (AV1) ──
-    // Apple VideoToolbox has no AV1 encoder, so there is no `av1_videotoolbox`.
-    /// NVIDIA NVENC AV1 (`av1_nvenc`) — Ada/Blackwell and newer.
-    #[serde(rename = "av1_nvenc")]
-    NvencAv1,
-    /// Intel QuickSync AV1 (`av1_qsv`) — Arc/Battlemage and newer.
-    #[serde(rename = "av1_qsv")]
-    QsvAv1,
-    /// Linux VAAPI AV1 (`av1_vaapi`) — Arc/Battlemage, RDNA3+ and newer.
-    #[serde(rename = "av1_vaapi")]
-    VaapiAv1,
-    /// AMD AMF AV1 (`av1_amf`) — RDNA3+ and newer.
-    #[serde(rename = "av1_amf")]
-    AmfAv1,
-}
-
-/// Hardware encoder backend (GPU vendor / API).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EncoderBackend {
-    /// Software encoder (libx264, libx265, libsvtav1, libvpx-vp9).
-    Software,
-    /// NVIDIA NVENC.
-    Nvenc,
-    /// Intel QuickSync.
-    Qsv,
-    /// Apple VideoToolbox.
-    VideoToolbox,
-    /// Linux VAAPI.
-    Vaapi,
-    /// AMD AMF.
-    Amf,
-}
-
-/// Codec family (compression standard).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CodecFamily {
-    /// H.264/AVC.
-    H264,
-    /// H.265/HEVC.
-    H265,
-    /// AV1.
-    Av1,
-    /// VP9.
-    Vp9,
-}
-
-impl Codec {
-    /// FFmpeg encoder name for this codec (e.g. `"libx264"`).
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Codec::X264 => "libx264",
-            Codec::X265 => "libx265",
-            Codec::SvtAv1 => "libsvtav1",
-            Codec::Vp9 => "libvpx-vp9",
-            Codec::NvencH264 => "h264_nvenc",
-            Codec::QsvH264 => "h264_qsv",
-            Codec::VideoToolboxH264 => "h264_videotoolbox",
-            Codec::VaapiH264 => "h264_vaapi",
-            Codec::AmfH264 => "h264_amf",
-            Codec::NvencH265 => "hevc_nvenc",
-            Codec::QsvH265 => "hevc_qsv",
-            Codec::VideoToolboxH265 => "hevc_videotoolbox",
-            Codec::VaapiH265 => "hevc_vaapi",
-            Codec::AmfH265 => "hevc_amf",
-            Codec::NvencAv1 => "av1_nvenc",
-            Codec::QsvAv1 => "av1_qsv",
-            Codec::VaapiAv1 => "av1_vaapi",
-            Codec::AmfAv1 => "av1_amf",
-        }
-    }
-
-    /// Hardware encoder backend for this codec.
-    pub fn backend(&self) -> EncoderBackend {
-        match self {
-            Codec::X264 | Codec::X265 | Codec::SvtAv1 | Codec::Vp9 => EncoderBackend::Software,
-            Codec::NvencH264 | Codec::NvencH265 | Codec::NvencAv1 => EncoderBackend::Nvenc,
-            Codec::QsvH264 | Codec::QsvH265 | Codec::QsvAv1 => EncoderBackend::Qsv,
-            Codec::VideoToolboxH264 | Codec::VideoToolboxH265 => EncoderBackend::VideoToolbox,
-            Codec::VaapiH264 | Codec::VaapiH265 | Codec::VaapiAv1 => EncoderBackend::Vaapi,
-            Codec::AmfH264 | Codec::AmfH265 | Codec::AmfAv1 => EncoderBackend::Amf,
-        }
-    }
-
-    /// Codec family (compression standard).
-    pub fn family(&self) -> CodecFamily {
-        match self {
-            Codec::X264
-            | Codec::NvencH264
-            | Codec::QsvH264
-            | Codec::VideoToolboxH264
-            | Codec::VaapiH264
-            | Codec::AmfH264 => CodecFamily::H264,
-            Codec::X265
-            | Codec::NvencH265
-            | Codec::QsvH265
-            | Codec::VideoToolboxH265
-            | Codec::VaapiH265
-            | Codec::AmfH265 => CodecFamily::H265,
-            Codec::SvtAv1 | Codec::NvencAv1 | Codec::QsvAv1 | Codec::VaapiAv1 | Codec::AmfAv1 => {
-                CodecFamily::Av1
-            }
-            Codec::Vp9 => CodecFamily::Vp9,
-        }
-    }
-
-    /// Whether this codec uses a hardware encoder backend.
-    pub fn is_hardware(&self) -> bool {
-        !matches!(self.backend(), EncoderBackend::Software)
-    }
-
-    /// Whether this codec is a software encoder.
-    pub fn is_software(&self) -> bool {
-        matches!(self.backend(), EncoderBackend::Software)
-    }
-}
-
-impl fmt::Display for Codec {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for Codec {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "libx264" | "x264" | "h264" => Ok(Codec::X264),
-            "libx265" | "x265" | "h265" | "hevc" => Ok(Codec::X265),
-            "libsvtav1" | "svtav1" | "av1" => Ok(Codec::SvtAv1),
-            "libvpx-vp9" | "vp9" | "libvpx" => Ok(Codec::Vp9),
-            // NVENC
-            "h264_nvenc" | "nvenc" | "nvenc_h264" => Ok(Codec::NvencH264),
-            "hevc_nvenc" | "nvenc_h265" | "nvenc_hevc" => Ok(Codec::NvencH265),
-            // QuickSync
-            "h264_qsv" | "qsv" | "qsv_h264" => Ok(Codec::QsvH264),
-            "hevc_qsv" | "qsv_h265" | "qsv_hevc" => Ok(Codec::QsvH265),
-            // VideoToolbox
-            "h264_videotoolbox" | "vt" | "vt_h264" | "videotoolbox" => Ok(Codec::VideoToolboxH264),
-            "hevc_videotoolbox" | "vt_h265" | "vt_hevc" => Ok(Codec::VideoToolboxH265),
-            // VAAPI
-            "h264_vaapi" | "vaapi" | "vaapi_h264" => Ok(Codec::VaapiH264),
-            "hevc_vaapi" | "vaapi_h265" | "vaapi_hevc" => Ok(Codec::VaapiH265),
-            // AMF
-            "h264_amf" | "amf" | "amf_h264" => Ok(Codec::AmfH264),
-            "hevc_amf" | "amf_h265" | "amf_hevc" => Ok(Codec::AmfH265),
-            // AV1 hardware
-            "av1_nvenc" | "nvenc_av1" => Ok(Codec::NvencAv1),
-            "av1_qsv" | "qsv_av1" => Ok(Codec::QsvAv1),
-            "av1_vaapi" | "vaapi_av1" => Ok(Codec::VaapiAv1),
-            "av1_amf" | "amf_av1" => Ok(Codec::AmfAv1),
-            _ => Err(anyhow::anyhow!("unknown codec: {s}")),
-        }
-    }
-}
-
-/// Video resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Resolution {
-    /// Pixel width.
-    pub width: i32,
-    /// Pixel height.
-    pub height: i32,
-}
-
-impl Resolution {
-    /// Creates a resolution from width and height in pixels.
-    pub const fn new(width: i32, height: i32) -> Self {
-        Self { width, height }
-    }
-
-    /// Human-friendly label like "1080p", "720p", etc.
-    pub fn label(&self) -> String {
-        match self.height {
-            h if h >= 2160 => "2160p".into(),
-            h if h >= 1440 => "1440p".into(),
-            h if h >= 1080 => "1080p".into(),
-            h if h >= 720 => "720p".into(),
-            h if h >= 480 => "480p".into(),
-            h if h >= 360 => "360p".into(),
-            h if h >= 240 => "240p".into(),
-            h => format!("{h}p"),
-        }
-    }
-}
-
-impl fmt::Display for Resolution {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}x{}", self.width, self.height)
-    }
-}
-
-impl std::str::FromStr for Resolution {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "2160p" | "4k" => Ok(RES_2160P),
-            "1440p" => Ok(RES_1440P),
-            "1080p" => Ok(RES_1080P),
-            "720p" => Ok(RES_720P),
-            "480p" => Ok(RES_480P),
-            "360p" => Ok(RES_360P),
-            "240p" => Ok(RES_240P),
-            other => {
-                if let Some((w, h)) = other.split_once('x') {
-                    Ok(Resolution::new(w.parse()?, h.parse()?))
-                } else {
-                    Err(anyhow::anyhow!("invalid resolution: {other}"))
-                }
-            }
-        }
-    }
-}
-
-/// 3840x2160 (4K UHD), 16:9.
-pub const RES_2160P: Resolution = Resolution::new(3840, 2160);
-/// 2560x1440 (QHD), 16:9.
-pub const RES_1440P: Resolution = Resolution::new(2560, 1440);
-/// 1920x1080 (Full HD), 16:9.
-pub const RES_1080P: Resolution = Resolution::new(1920, 1080);
-/// 1280x720 (HD), 16:9.
-pub const RES_720P: Resolution = Resolution::new(1280, 720);
-/// 854x480 (SD), 16:9.
-pub const RES_480P: Resolution = Resolution::new(854, 480);
-/// 640x360, 16:9.
-pub const RES_360P: Resolution = Resolution::new(640, 360);
-/// 426x240, 16:9.
-pub const RES_240P: Resolution = Resolution::new(426, 240);
-
-/// Rate control mode for encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum RateControlMode {
-    /// Constant rate factor (default).
-    #[default]
-    Crf,
-    /// CRF with VBV/decoder-model bitrate cap.
-    CappedCrf,
-    /// Fixed quantizer (Netflix-style, no R-D optimization).
-    Qp,
-    /// 2-pass variable bitrate (for final delivery encodes).
-    Vbr,
-}
+// ── Engine-agnostic types (defined in `viser-engine`, re-exported for compat) ──
+pub use viser_engine::{
+    Codec, CodecFamily, DynEngine, EncodeJob, EncodeResult, EncoderBackend, EngineCapabilities,
+    FormatInfo, Hdr10Metadata, MasteringDisplay, ProbeResult, Progress, RES_240P, RES_360P,
+    RES_480P, RES_720P, RES_1080P, RES_1440P, RES_2160P, RateControlMode, Resolution, SourceFormat,
+    StreamInfo, VideoEngine, bit_depth, chunk_plan, codec_supports_bit_depth, hw_pix_fmt,
+    psnr_peak, yuv420p_for_depth,
+};
 
 #[cfg(test)]
 mod tests {
@@ -375,6 +92,7 @@ mod tests {
         assert_eq!("vaapi".parse::<Codec>().unwrap(), Codec::VaapiH264);
         assert_eq!("h264_amf".parse::<Codec>().unwrap(), Codec::AmfH264);
         assert_eq!("amf".parse::<Codec>().unwrap(), Codec::AmfH264);
+        assert_eq!("mlvc".parse::<Codec>().unwrap(), Codec::External);
         assert!("unknown".parse::<Codec>().is_err());
     }
 
@@ -386,6 +104,7 @@ mod tests {
         assert_eq!(Codec::VideoToolboxH264.backend(), EncoderBackend::VideoToolbox);
         assert_eq!(Codec::VaapiH264.backend(), EncoderBackend::Vaapi);
         assert_eq!(Codec::AmfH264.backend(), EncoderBackend::Amf);
+        assert_eq!(Codec::External.backend(), EncoderBackend::External);
     }
 
     #[test]
@@ -396,6 +115,7 @@ mod tests {
         assert_eq!(Codec::NvencH265.family(), CodecFamily::H265);
         assert_eq!(Codec::SvtAv1.family(), CodecFamily::Av1);
         assert_eq!(Codec::Vp9.family(), CodecFamily::Vp9);
+        assert_eq!(Codec::External.family(), CodecFamily::Other);
     }
 
     #[test]
@@ -406,6 +126,7 @@ mod tests {
         assert!(Codec::NvencH264.is_hardware());
         assert!(Codec::QsvH265.is_hardware());
         assert!(Codec::VideoToolboxH264.is_hardware());
+        assert!(!Codec::External.is_hardware());
     }
 
     #[test]
@@ -423,6 +144,7 @@ mod tests {
             Codec::NvencH264,
             Codec::NvencH265,
             Codec::QsvH264,
+            Codec::External,
         ] {
             let json = serde_json::to_string(codec).unwrap();
             let back: Codec = serde_json::from_str(&json).unwrap();

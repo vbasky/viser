@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::{ProbeResult, probe};
+use crate::ProbeResult;
+use crate::probe::probe as probe_media;
 
 /// Thread-safe probe result cache to avoid redundant ffprobe calls.
 #[derive(Debug, Clone)]
@@ -48,7 +49,7 @@ impl ProbeCache {
         }
 
         let result = match self.engine {
-            ProbeEngine::Ffprobe => probe(path).await?,
+            ProbeEngine::Ffprobe => probe_media(path).await?,
             #[cfg(feature = "revelo")]
             ProbeEngine::Revelo => crate::probe_revelo(path).await?,
         };

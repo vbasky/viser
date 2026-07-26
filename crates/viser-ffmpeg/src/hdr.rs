@@ -1,113 +1,11 @@
-//! HDR10 static metadata: mastering-display colour volume (SMPTE ST 2086) and
-//! content light level (MaxCLL / MaxFALL, CTA-861.3).
+//! HDR10 static metadata probing via ffprobe (FFmpeg-specific).
 //!
-//! ffprobe does not surface these as top-level stream fields; they ride as
-//! per-frame side data (HEVC SEI / AV1 OBU metadata). [`probe_hdr10_metadata`]
-//! reads the first video frame's `side_data_list` and normalises the values
-//! into the integer units x265 expects for its `master-display` / `max-cll`
-//! parameters, so HDR10 signalling survives a re-encode.
+//! Types live in `viser-engine` and are re-exported from this crate's root.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::process::Command;
 
-use crate::ffprobe_path;
-
-/// SMPTE ST 2086 mastering-display colour volume.
-///
-/// Chromaticity coordinates are stored in units of `1/50000` and luminance in
-/// units of `0.0001 cd/m²` — the exact integer encoding x265's `master-display`
-/// parameter consumes.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MasteringDisplay {
-    /// Green primary x, in 1/50000 units.
-    pub green_x: u32,
-    /// Green primary y, in 1/50000 units.
-    pub green_y: u32,
-    /// Blue primary x, in 1/50000 units.
-    pub blue_x: u32,
-    /// Blue primary y, in 1/50000 units.
-    pub blue_y: u32,
-    /// Red primary x, in 1/50000 units.
-    pub red_x: u32,
-    /// Red primary y, in 1/50000 units.
-    pub red_y: u32,
-    /// White point x, in 1/50000 units.
-    pub white_x: u32,
-    /// White point y, in 1/50000 units.
-    pub white_y: u32,
-    /// Maximum display luminance, in 0.0001 cd/m² units.
-    pub max_luminance: u32,
-    /// Minimum display luminance, in 0.0001 cd/m² units.
-    pub min_luminance: u32,
-}
-
-impl MasteringDisplay {
-    /// Formats as an x265 `master-display` value:
-    /// `G(gx,gy)B(bx,by)R(rx,ry)WP(wx,wy)L(max,min)`, with chromaticity in
-    /// 1/50000 units and luminance in 0.0001 cd/m² units (the stored encoding).
-    pub fn to_x265_string(&self) -> String {
-        format!(
-            "G({},{})B({},{})R({},{})WP({},{})L({},{})",
-            self.green_x,
-            self.green_y,
-            self.blue_x,
-            self.blue_y,
-            self.red_x,
-            self.red_y,
-            self.white_x,
-            self.white_y,
-            self.max_luminance,
-            self.min_luminance,
-        )
-    }
-
-    /// Formats as an SVT-AV1 `mastering-display` value. SVT-AV1 shares x265's
-    /// `G()B()R()WP()L()` grammar but expects **real** chromaticity coordinates
-    /// in `[0,1]` and luminance in cd/m² — not x265's scaled integers. Feeding
-    /// it the x265 integers makes SVT-AV1 clip the values to garbage.
-    pub fn to_svtav1_string(&self) -> String {
-        let c = |u: u32| trim_float(u as f64 / CHROMA_UNIT);
-        let l = |u: u32| trim_float(u as f64 / LUMA_UNIT);
-        format!(
-            "G({},{})B({},{})R({},{})WP({},{})L({},{})",
-            c(self.green_x),
-            c(self.green_y),
-            c(self.blue_x),
-            c(self.blue_y),
-            c(self.red_x),
-            c(self.red_y),
-            c(self.white_x),
-            c(self.white_y),
-            l(self.max_luminance),
-            l(self.min_luminance),
-        )
-    }
-}
-
-/// Formats a float with up to 6 decimals, trimming trailing zeros (and a bare
-/// trailing `.`), so `0.265000 → 0.265` and `1000.0 → 1000`.
-fn trim_float(v: f64) -> String {
-    let s = format!("{v:.6}");
-    s.trim_end_matches('0').trim_end_matches('.').to_string()
-}
-
-/// HDR10 static metadata extracted from a source's first video frame.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Hdr10Metadata {
-    /// Mastering-display colour volume, when present.
-    pub mastering_display: Option<MasteringDisplay>,
-    /// Maximum content light level (MaxCLL), in cd/m².
-    pub max_cll: Option<u32>,
-    /// Maximum frame-average light level (MaxFALL), in cd/m².
-    pub max_fall: Option<u32>,
-}
-
-impl Hdr10Metadata {
-    /// Returns `true` when no usable metadata was found.
-    pub fn is_empty(&self) -> bool {
-        self.mastering_display.is_none() && self.max_cll.is_none()
-    }
-}
+use crate::{Hdr10Metadata, MasteringDisplay, ffprobe_path};
 
 /// Probes the first video frame for HDR10 static metadata.
 ///
@@ -320,14 +218,6 @@ mod tests {
             md.to_svtav1_string(),
             "G(0.265,0.69)B(0.15,0.06)R(0.68,0.32)WP(0.3127,0.329)L(1000,0.005)"
         );
-    }
-
-    #[test]
-    fn test_trim_float() {
-        assert_eq!(trim_float(0.265), "0.265");
-        assert_eq!(trim_float(1000.0), "1000");
-        assert_eq!(trim_float(0.005), "0.005");
-        assert_eq!(trim_float(0.0), "0");
     }
 
     #[test]

@@ -50,7 +50,8 @@ bitrates.
 ```text
 viser/
 ├── crates/
-│   ├── viser-ffmpeg/         FFmpeg/FFprobe wrapper (encode, probe, path, cache)
+│   ├── viser-engine/         Engine-agnostic types + VideoEngine trait
+│   ├── viser-ffmpeg/         FFmpeg backend (implements VideoEngine)
 │   ├── viser-quality/        VMAF/PSNR/SSIM measurement
 │   ├── viser-hull/           Convex hull (Pareto frontier) + BD-Rate
 │   ├── viser-ladder/         Ladder selection with crossover enforcement
@@ -255,6 +256,8 @@ detected dynamic range and color metadata to make that decision explicit.
 | H.264/AVC | `libx264` | Fastest encode, widest device support |
 | H.265/HEVC | `libx265` | ~30-40% better compression than H.264 |
 | AV1 | `libsvtav1` | ~50% better compression, royalty-free, SVT-AV1 4.0 |
+| VP9 | `libvpx-vp9` | Royalty-free; good browser support |
+| External / neural | `external` (`mlvc`, `mlvc-s`) | Non-FFmpeg engines via `VideoEngine` / `VISER_EXTERNAL_ENCODE` — see [video engines](docs/video-engines.md) |
 
 ### Hardware encode matrix
 

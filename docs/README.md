@@ -15,6 +15,7 @@ These documents explain the principles, math, and science behind content-aware v
 | [Shot Detection](shot-detection.md) | FFmpeg scdet, PySceneDetect, TransNetV2 - comparison and guidelines |
 | [Chunked Encoding](chunked-encoding.md) | Parallel encoding with shot-aware chunking for production workflows |
 | [Robustness Assessment](robustness-assessment.md) | Project assessment: strengths, weaknesses, and feature gaps vs. commercial tools |
+| [Video Engines](video-engines.md) | Engine-agnostic encode/probe layer; FFmpeg default and external/MLVC backends |
 
 ## Reading Order
 

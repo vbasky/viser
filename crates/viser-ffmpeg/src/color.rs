@@ -1,153 +1,22 @@
-//! Bit depth, pixel format, and HDR color metadata helpers.
+//! Bit depth, pixel format, and HDR color metadata helpers (FFmpeg-specific).
+//!
+//! Engine-agnostic types and pure helpers live in `viser-engine` and are
+//! re-exported from this crate's root.
 
-use crate::{Codec, CodecFamily, EncoderBackend, Hdr10Metadata, StreamInfo};
+use crate::{Codec, CodecFamily, SourceFormat, codec_supports_bit_depth, hw_pix_fmt};
 
-/// Snapshot of source video color characteristics for encode preservation.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SourceFormat {
-    /// Preferred output pixel format (e.g. `yuv420p10le`).
-    pub pix_fmt: String,
-    /// Effective bit depth (8, 10, 12, or 16).
-    pub bit_depth: u8,
-    /// Color primaries from probe (e.g. `bt2020`).
-    pub color_primaries: String,
-    /// Color transfer from probe (e.g. `smpte2084`).
-    pub color_transfer: String,
-    /// Color matrix / space from probe.
-    pub color_space: String,
-    /// Whether the stream carries HDR signaling.
-    pub is_hdr: bool,
-    /// HDR10 static metadata (mastering display + MaxCLL/MaxFALL), when probed.
-    pub hdr10: Option<Hdr10Metadata>,
-}
-
-impl SourceFormat {
-    /// Builds a format snapshot from a probed video stream.
-    pub fn from_stream(stream: &StreamInfo) -> Self {
-        let bit_depth = bit_depth(stream);
-        let pix_fmt = if stream.pix_fmt.is_empty() {
-            yuv420p_for_depth(bit_depth).to_string()
-        } else {
-            stream.pix_fmt.clone()
-        };
-        Self {
-            pix_fmt,
-            bit_depth,
-            color_primaries: stream.color_primaries.clone(),
-            color_transfer: stream.color_transfer.clone(),
-            color_space: stream.color_space.clone(),
-            is_hdr: stream.is_hdr(),
-            hdr10: None,
-        }
-    }
-
-    /// Returns `true` when the source should be encoded at more than 8 bits per sample.
-    pub fn is_high_bit_depth(&self) -> bool {
-        self.bit_depth > 8
-    }
-
-    /// Probes and attaches HDR10 static metadata (mastering display + MaxCLL)
-    /// when the source is HDR, so it can be re-signalled on the encode.
-    ///
-    /// A no-op for SDR sources. Probe failures are swallowed (best-effort): a
-    /// missing mastering-display block degrades to colour-primary signalling
-    /// rather than failing the encode.
-    pub async fn enrich_hdr10(mut self, path: &str) -> Self {
-        if self.is_hdr {
-            if let Ok(Some(md)) = crate::probe_hdr10_metadata(path).await {
-                self.hdr10 = Some(md);
-            }
-        }
-        self
-    }
-}
-
-/// Returns the effective bit depth of a video stream.
-pub fn bit_depth(stream: &StreamInfo) -> u8 {
-    if stream.bits_per_raw_sample >= 10 {
-        return stream.bits_per_raw_sample.clamp(8, 16) as u8;
-    }
-    if stream.pix_fmt.contains("16") {
-        return 16;
-    }
-    if stream.pix_fmt.contains("12") {
-        return 12;
-    }
-    if stream.pix_fmt.contains("10") {
-        return 10;
-    }
-    8
-}
-
-/// Default 4:2:0 pixel format for a given bit depth.
-pub fn yuv420p_for_depth(depth: u8) -> &'static str {
-    match depth {
-        10 => "yuv420p10le",
-        12 => "yuv420p12le",
-        16 => "yuv420p16le",
-        _ => "yuv420p",
-    }
-}
-
-/// PSNR peak value for a given bit depth.
-pub fn psnr_peak(depth: u8) -> f64 {
-    match depth {
-        10 => 1023.0,
-        12 => 4095.0,
-        16 => 65535.0,
-        _ => 255.0,
-    }
-}
-
-/// Returns whether a codec can encode at the requested bit depth.
+/// Probes and attaches HDR10 static metadata when the source is HDR.
 ///
-/// Hardware encoders (NVENC, QSV, AMF, VideoToolbox) generally support 10-bit
-/// for HEVC and AV1, but not for H.264 AVC. VAAPI and VP9 have their own
-/// constraints. Returns `false` for unknown or unsupported combinations.
-pub fn codec_supports_bit_depth(codec: Codec, depth: u8) -> bool {
-    if depth <= 8 {
-        return true;
-    }
-    match codec {
-        // Software
-        Codec::X264 | Codec::X265 | Codec::SvtAv1 | Codec::Vp9 => true,
-        // Hardware encoders: HEVC and AV1 backends support 10-bit; H.264 backends do not.
-        Codec::NvencH265 | Codec::QsvH265 | Codec::AmfH265 | Codec::VideoToolboxH265 => true,
-        Codec::NvencAv1 | Codec::QsvAv1 | Codec::AmfAv1 => true,
-        Codec::VaapiH265 | Codec::VaapiAv1 => true,
-        // H.264 HW and VideoToolbox AV1 are 8-bit only.
-        Codec::NvencH264
-        | Codec::QsvH264
-        | Codec::AmfH264
-        | Codec::VideoToolboxH264
-        | Codec::VaapiH264 => false,
-    }
-}
-
-/// Returns the hardware-appropriate high-bit-depth pixel format for a given
-/// codec and source format, or `None` when the backend does not support high
-/// bit depth (or the format is handled elsewhere, e.g. via VAAPI hwupload).
-fn hw_pix_fmt(format: &SourceFormat, codec: Codec) -> Option<String> {
-    if !format.is_high_bit_depth() {
-        return None;
-    }
-    // Hardware encoders typically use the 10-bit 4:2:0 p010le format.
-    // NVENC, QSV, AMF, and VideoToolbox all accept this for HEVC/AV1.
-    // We accept yuv420p10le sources and map to p010le where possible.
-    match codec.backend() {
-        EncoderBackend::Nvenc
-        | EncoderBackend::Qsv
-        | EncoderBackend::Amf
-        | EncoderBackend::VideoToolbox => {
-            if format.bit_depth == 10 {
-                Some("p010le".into())
-            } else {
-                None
-            }
+/// A no-op for SDR sources. Probe failures are swallowed (best-effort): a
+/// missing mastering-display block degrades to colour-primary signalling
+/// rather than failing the encode.
+pub async fn enrich_hdr10(mut format: SourceFormat, path: &str) -> SourceFormat {
+    if format.is_hdr {
+        if let Ok(Some(md)) = crate::probe_hdr10_metadata(path).await {
+            format.hdr10 = Some(md);
         }
-        EncoderBackend::Vaapi => None, // pix_fmt is set via hwupload filter
-        EncoderBackend::Software => None,
     }
+    format
 }
 
 /// FFmpeg output arguments that preserve source bit depth and HDR metadata.
@@ -305,7 +174,7 @@ fn merge_x265_color_params(args: &mut Vec<String>, format: &SourceFormat) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StreamInfo;
+    use crate::{SourceFormat, StreamInfo, bit_depth, psnr_peak};
 
     fn base_stream() -> StreamInfo {
         StreamInfo {

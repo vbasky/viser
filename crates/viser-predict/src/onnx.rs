@@ -73,6 +73,7 @@ impl OnnxModel {
             CodecFamily::H265 => 0.72,
             CodecFamily::Av1 => 0.58,
             CodecFamily::Vp9 => 0.65,
+            CodecFamily::Other => 0.50,
         };
         let crf_norm = (crf as f64 / 63.0).clamp(0.0, 1.0);
 

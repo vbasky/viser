@@ -168,6 +168,7 @@ pub fn predict_point(profile: &Profile, res: Resolution, codec: Codec, crf: i32)
         viser_ffmpeg::CodecFamily::H265 => 0.72,
         viser_ffmpeg::CodecFamily::Av1 => 0.58,
         viser_ffmpeg::CodecFamily::Vp9 => 0.65,
+        viser_ffmpeg::CodecFamily::Other => 0.50,
     };
 
     let crf_factor = 2.0_f64.powf((23.0 - crf as f64) / 6.0);

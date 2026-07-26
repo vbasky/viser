@@ -18,6 +18,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+viser-engine = { path = "../viser-engine", version = "0.12.0", optional = true }
 viser-ffmpeg = { path = "../viser-ffmpeg", version = "0.12.0", optional = true }
 viser-quality = { path = "../viser-quality", version = "0.12.0", optional = true }
 viser-hull = { path = "../viser-hull", version = "0.12.0", optional = true }
@@ -36,6 +37,7 @@ viser-chart = { path = "../viser-chart", version = "0.12.0", optional = true }
 [features]
 default = ["full"]
 full = [
+    "engine",
     "ffmpeg",
     "quality",
     "hull",
@@ -51,7 +53,8 @@ full = [
     "compare",
     "chart",
 ]
-ffmpeg = ["dep:viser-ffmpeg"]
+engine = ["dep:viser-engine"]
+ffmpeg = ["dep:viser-ffmpeg", "engine"]
 quality = ["dep:viser-quality"]
 hull = ["dep:viser-hull"]
 ladder = ["dep:viser-ladder"]

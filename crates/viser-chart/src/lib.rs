@@ -390,6 +390,7 @@ pub fn short_codec_name(codec: &str) -> &str {
         "av1_qsv" => "AV1 (QSV)",
         "av1_vaapi" => "AV1 (VAAPI)",
         "av1_amf" => "AV1 (AMF)",
+        "external" | "mlvc" | "mlvc-s" => "External",
         _ => codec,
     }
 }

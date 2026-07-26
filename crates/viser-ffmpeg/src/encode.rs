@@ -3,79 +3,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 
+use crate::probe::probe as probe_media;
 use crate::{
-    Codec, EncoderBackend, RateControlMode, Resolution, SourceFormat, StreamInfo,
-    encode_color_args, ffmpeg_path, probe,
+    Codec, EncodeJob, EncodeResult, EncoderBackend, Progress, RateControlMode, chunk_plan,
+    encode_color_args, ffmpeg_path,
 };
-
-/// Parameters for a single encode.
-#[derive(Debug, Clone)]
-pub struct EncodeJob {
-    /// Source media file path.
-    pub input: String,
-    /// Destination file path for the encoded output.
-    pub output: String,
-    /// Optional target resolution; when set, scales with the lanczos filter.
-    pub resolution: Option<Resolution>,
-    /// Video codec to encode with.
-    pub codec: Codec,
-    /// Constant rate factor / quantizer value (interpretation depends on `rate_control`).
-    pub crf: i32,
-    /// Rate-control mode that determines how `crf`/bitrate fields are applied.
-    pub rate_control: RateControlMode,
-    /// Target bitrate in kbps; used for VBR mode.
-    pub target_bitrate: f64, // kbps, used for VBR mode
-    /// Maximum bitrate cap in kbps; used for capped CRF mode.
-    pub max_bitrate: f64, // kbps, used for capped CRF mode
-    /// VBV buffer size in kbps; used for capped CRF mode.
-    pub bufsize: f64, // kbps, used for capped CRF mode
-    /// Encoder speed preset (e.g. `"medium"`); empty leaves the encoder default.
-    pub preset: String,
-    /// Optional hardware-accelerated decode method (e.g. `"vaapi"`, `"cuda"`,
-    /// `"qsv"`, `"videotoolbox"`). `None` (or empty) decodes in software.
-    /// Frames are downloaded to system memory for the filter/encode pipeline.
-    pub hwaccel: Option<String>,
-    /// Extra raw FFmpeg arguments appended verbatim before the output path.
-    pub extra_args: Vec<String>,
-    /// Source color/bit-depth characteristics to preserve in the output encode.
-    pub source_format: Option<SourceFormat>,
-}
-
-impl EncodeJob {
-    /// Attaches probed source video characteristics for bit-depth/HDR preservation.
-    pub fn with_source_video(mut self, video: &StreamInfo) -> Self {
-        self.source_format = Some(SourceFormat::from_stream(video));
-        self
-    }
-}
-
-/// Output of a completed encode.
-#[derive(Debug, Clone)]
-pub struct EncodeResult {
-    /// The job that produced this result.
-    pub job: EncodeJob,
-    /// Average bitrate of the output in kbps, measured by probing it.
-    pub bitrate: f64, // kbps (average)
-    /// Output file size in bytes.
-    pub file_size: u64, // bytes
-    /// Wall-clock time taken to encode.
-    pub duration: Duration, // wall-clock encode time
-}
-
-/// Real-time encoding progress info parsed from FFmpeg.
-#[derive(Debug, Clone, Default)]
-pub struct Progress {
-    /// Number of frames encoded so far.
-    pub frame: i64,
-    /// Current encoding rate in frames per second.
-    pub fps: f64,
-    /// Current output bitrate in kbps.
-    pub bitrate: f64, // kbps
-    /// Encoding speed relative to real time (e.g. 2.5 means 2.5x).
-    pub speed: f64, // e.g. 2.5x
-    /// Output timestamp reached so far.
-    pub time: Duration,
-}
 
 /// Runs an FFmpeg encode job. Progress updates are sent on the channel if provided.
 pub async fn encode(
@@ -130,7 +62,7 @@ async fn run_encode(
     let meta = std::fs::metadata(&job.output)
         .map_err(|e| anyhow::anyhow!("failed to stat output: {e}"))?;
 
-    let probe_result = probe(&job.output).await?;
+    let probe_result = probe_media(&job.output).await?;
     let bitrate = probe_result.format.bit_rate as f64 / 1000.0;
 
     Ok(EncodeResult { job, bitrate, file_size: meta.len(), duration: elapsed })
@@ -208,26 +140,6 @@ pub async fn extract(input: &str, output: &str, start: f64, duration: f64) -> an
     Ok(())
 }
 
-/// Splits a source duration into a list of `(start_seconds, chunk_duration_seconds)` tuples.
-///
-/// Each chunk is `chunk_seconds` long except the last, which is shortened to fit
-/// the remaining duration. Returns an empty vec when `duration` or `chunk_seconds`
-/// is non-positive.
-pub fn chunk_plan(duration: f64, chunk_seconds: f64) -> Vec<(f64, f64)> {
-    if duration <= 0.0 || chunk_seconds <= 0.0 {
-        return vec![];
-    }
-    let mut start = 0.0;
-    let mut chunks = Vec::new();
-    while start < duration {
-        let remaining = duration - start;
-        let cd = remaining.min(chunk_seconds);
-        chunks.push((start, cd));
-        start += cd;
-    }
-    chunks
-}
-
 /// Encode a source in chunks and concatenate the results.
 ///
 /// Splits the source into `chunk_seconds`-long segments, encodes each segment
@@ -241,7 +153,7 @@ pub async fn chunked_encode(
     chunk_seconds: f64,
     parallel: usize,
 ) -> anyhow::Result<EncodeResult> {
-    let probe_result = probe(&job.input).await?;
+    let probe_result = probe_media(&job.input).await?;
     let duration = probe_result.format.duration;
     if duration <= 0.0 {
         anyhow::bail!("could not determine source duration for chunked encoding");
@@ -331,7 +243,7 @@ pub async fn chunked_encode(
     concat(&outputs, &job.output).await?;
 
     let meta = std::fs::metadata(&job.output)?;
-    let output_probe = probe(&job.output).await?;
+    let output_probe = probe_media(&job.output).await?;
     let bitrate = output_probe.format.bit_rate as f64 / 1000.0;
 
     Ok(EncodeResult { job, bitrate, file_size: meta.len(), duration: started.elapsed() })
@@ -608,7 +520,7 @@ fn build_hw_args(
                     args.extend(["-qp_p".into(), (job.crf + 2).to_string()]);
                     args.extend(["-usage".into(), "transcoding".into()]);
                 }
-                EncoderBackend::Software => unreachable!(),
+                EncoderBackend::Software | EncoderBackend::External => unreachable!(),
             }
             // VBV / maxrate for capped mode
             if let RateControlMode::CappedCrf = job.rate_control {
@@ -699,7 +611,7 @@ fn add_hw_preset(args: &mut Vec<String>, codec: Codec, preset: &str) {
                 args.extend(["-realtime".into(), "1".into()]);
             }
         }
-        EncoderBackend::Software => unreachable!(),
+        EncoderBackend::Software | EncoderBackend::External => unreachable!(),
     }
 }
 
@@ -837,7 +749,7 @@ fn parse_progress_line(line: &str, p: &mut Progress) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Codec;
+    use crate::{Codec, Resolution, SourceFormat};
 
     fn sample_job(mode: RateControlMode) -> EncodeJob {
         EncodeJob {

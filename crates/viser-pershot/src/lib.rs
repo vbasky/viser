@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use viser_encoding::ProgressSender;
-use viser_ffmpeg::{Codec, Resolution, extract};
+use viser_engine::{Codec, DynEngine, Resolution};
 use viser_hull::{Hull, Point};
 use viser_ladder::Opts as LadderOpts;
 use viser_shot::{self, DetectOpts, Shot};
@@ -121,10 +121,23 @@ pub struct Progress {
 }
 
 /// Runs per-shot analysis: detect shots, analyze each independently.
+///
+/// Uses the process-wide default video engine.
 pub async fn analyze(
     source: &str,
     cfg: Config,
     progress_tx: Option<tokio::sync::mpsc::Sender<Progress>>,
+) -> anyhow::Result<Result> {
+    let engine = viser_engine::default_engine().unwrap_or_else(|_| viser_ffmpeg::ffmpeg_engine());
+    analyze_with(source, cfg, progress_tx, engine).await
+}
+
+/// Per-shot analysis with an explicit [`DynEngine`] (probe/extract + encode).
+pub async fn analyze_with(
+    source: &str,
+    cfg: Config,
+    progress_tx: Option<tokio::sync::mpsc::Sender<Progress>>,
+    engine: DynEngine,
 ) -> anyhow::Result<Result> {
     let start = Instant::now();
 
@@ -145,7 +158,7 @@ pub async fn analyze(
     for (i, s) in shots.iter().enumerate() {
         let seg_path = tmp_dir.path().join(format!("shot_{i:03}.mkv"));
         let seg_str = seg_path.to_string_lossy().to_string();
-        extract(&source, &seg_str, s.start.as_secs_f64(), s.duration.as_secs_f64()).await?;
+        engine.extract(&source, &seg_str, s.start.as_secs_f64(), s.duration.as_secs_f64()).await?;
         segment_paths.push((i, seg_path, seg_str, s.clone()));
     }
 
@@ -164,10 +177,12 @@ pub async fn analyze(
         };
         let sender = sender.clone();
         let shots_len = shots.len();
+        let engine = engine.clone();
 
         set.spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
-            let shot_analysis = viser_pertitle::analyze(&seg_str, shot_cfg, None).await?;
+            let shot_analysis =
+                viser_pertitle::analyze_with(&seg_str, shot_cfg, None, engine).await?;
             let _ = std::fs::remove_file(&seg_path);
             sender.send(Progress { shot_done: i + 1, shot_total: shots_len, shot_index: i });
             Ok::<_, anyhow::Error>((

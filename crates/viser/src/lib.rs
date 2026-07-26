@@ -23,7 +23,8 @@
 //!
 //! | Module | Crate | Purpose |
 //! |--------|-------|---------|
-//! | [`ffmpeg`] | `viser-ffmpeg` | FFmpeg/FFprobe wrapper |
+//! | [`engine`] | `viser-engine` | Engine-agnostic encode/probe traits + shared types |
+//! | [`ffmpeg`] | `viser-ffmpeg` | FFmpeg/FFprobe engine backend |
 //! | [`quality`] | `viser-quality` | VMAF/PSNR/SSIM measurement |
 //! | [`hull`] | `viser-hull` | Convex hull (Pareto frontier) and BD-Rate |
 //! | [`ladder`] | `viser-ladder` | Bitrate ladder selection |
@@ -37,6 +38,9 @@
 //! | [`contextaware`] | `viser-contextaware` | Device-specific ladder generation |
 //! | [`compare`] | `viser-compare` | Side-by-side comparison player |
 //! | [`chart`] | `viser-chart` | Chart generation (R-D curves, hull, ladder) |
+
+#[cfg(feature = "engine")]
+pub use viser_engine as engine;
 
 #[cfg(feature = "ffmpeg")]
 pub use viser_ffmpeg as ffmpeg;

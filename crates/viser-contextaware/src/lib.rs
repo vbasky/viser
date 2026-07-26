@@ -11,6 +11,7 @@ pub use profile::*;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use viser_encoding::{Config as EncodingConfig, ProgressSender};
+use viser_engine::DynEngine;
 use viser_hull::{Hull, Point};
 use viser_ladder::{self, Ladder};
 
@@ -78,11 +79,22 @@ pub struct Progress {
     pub device_name: String,
 }
 
-/// Runs per-title analysis for each device profile.
+/// Runs per-title analysis for each device profile (default engine).
 pub async fn analyze(
     source: &str,
     cfg: Config,
     progress_tx: Option<tokio::sync::mpsc::Sender<Progress>>,
+) -> anyhow::Result<Result> {
+    let engine = viser_engine::default_engine().unwrap_or_else(|_| viser_ffmpeg::ffmpeg_engine());
+    analyze_with(source, cfg, progress_tx, engine).await
+}
+
+/// Context-aware analysis with an explicit [`DynEngine`].
+pub async fn analyze_with(
+    source: &str,
+    cfg: Config,
+    progress_tx: Option<tokio::sync::mpsc::Sender<Progress>>,
+    engine: DynEngine,
 ) -> anyhow::Result<Result> {
     let start = Instant::now();
     let mut devices = Vec::new();
@@ -107,7 +119,7 @@ pub async fn analyze(
             ..Default::default()
         };
 
-        let pt_result = viser_pertitle::analyze(source, pt_cfg, None)
+        let pt_result = viser_pertitle::analyze_with(source, pt_cfg, None, engine.clone())
             .await
             .map_err(|e| anyhow::anyhow!("analysis for {} failed: {e}", profile.name))?;
 

@@ -142,7 +142,8 @@ async fn fate_encode_preserves_hdr10_metadata() {
 
     let source_info = probe(&source_str).await.unwrap();
     let video = source_info.video_stream().unwrap();
-    let source_format = SourceFormat::from_stream(video).enrich_hdr10(&source_str).await;
+    let source_format =
+        viser_ffmpeg::enrich_hdr10(SourceFormat::from_stream(video), &source_str).await;
     assert!(source_format.is_hdr, "source should be detected as HDR");
     assert!(source_format.hdr10.is_some(), "HDR10 metadata should be attached");
 
@@ -190,7 +191,8 @@ async fn fate_svtav1_encode_preserves_hdr10_metadata() {
 
     let source_info = probe(&source_str).await.unwrap();
     let video = source_info.video_stream().unwrap();
-    let source_format = SourceFormat::from_stream(video).enrich_hdr10(&source_str).await;
+    let source_format =
+        viser_ffmpeg::enrich_hdr10(SourceFormat::from_stream(video), &source_str).await;
     assert!(source_format.hdr10.is_some(), "HDR10 metadata should be attached");
 
     let output = tmp.path().join("encoded_hdr10_av1.mp4");

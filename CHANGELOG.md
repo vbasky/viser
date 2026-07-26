@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Engine-agnostic media layer (`viser-engine`)** — shared types
+  (`Codec`, `Resolution`, `EncodeJob`, `ProbeResult`, `SourceFormat`, …) and
+  the `VideoEngine` trait live outside FFmpeg. `FfmpegEngine` implements the
+  trait; `ExternalEngine` shells out via `VISER_EXTERNAL_ENCODE` /
+  `VISER_EXTERNAL_PROBE` for neural/external codecs (e.g. MLVC). See
+  `docs/video-engines.md`.
+- **`Codec::External`** — aliases `external`, `mlvc`, `mlvc-s` for non-FFmpeg
+  backends.
+- **Dual-engine `CompositeEngine`** — FFmpeg (or other) for probe/extract/concat
+  + separate encode backend (MLVC/external).
+- **First-class MLVC config** — `MlvcConfig` / `MlvcModel` / `MlvcVariant`,
+  CLI `--engine mlvc` and `--mlvc-*` flags (encode command supplied by the user).
+- **Pipeline engine injection** — `analyze_with` / `adapt_with` on per-title,
+  per-shot, per-segment, and context-aware; CLI encode/delivery use the
+  resolved `DynEngine`.
+- **Engine resolver** — `viser_ffmpeg::resolve_engine` / `install_engine` from
+  `EngineOptions`.
+
+### Changed
+
+- `viser-ffmpeg` re-exports engine types (existing `use viser_ffmpeg::Codec`
+  imports keep working). HDR enrich is `enrich_hdr10(format, path)` free
+  function rather than a method on `SourceFormat`.
+
 ## [0.12.0] - 2026-07-20
 
 Post-P2 roadmap completion: HW HDR encode path, chunked encoding, cost-aware and
